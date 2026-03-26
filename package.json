@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run test && npm run build"
+    "prepublishOnly": "npm run test && npm run build",
+    "gen:types": "ts-node scripts/generate-types.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "sqlite3": "^6.0.1",
+    "ts-morph": "^27.0.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },
