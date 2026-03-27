@@ -321,12 +321,15 @@ describe('Oerem ORM Unit Test', () => {
             const results = await User.query(q =>
                 q.select(['username as nama_lengkap', 'email as surel'])
                     .where('username', 'ghozali')
-            ).get();
+            ).get<{
+                nama_lengkap: string
+                surel: string
+            }[]>();
 
-            const row = results[0] as any;
+            const row = results[0];
             expect(row.nama_lengkap).toBe('ghozali');
             expect(row.surel).toBe('ghozali@test.com');
-            expect(row.username).toBeUndefined(); // Field asli harusnya tidak ada
+            expect((row as any).username).toBeUndefined(); // Field asli harusnya tidak ada
         });
 
         it('should support field aliasing using object mapping', async () => {
@@ -335,9 +338,12 @@ describe('Oerem ORM Unit Test', () => {
                     display_name: 'username',
                     contact: 'email'
                 }).where('id', 1)
-            ).get();
+            ).get<{
+                display_name: string
+                contact: string
+            }[]>();
 
-            const row = results[0] as any;
+            const row = results[0];
             console.log(row.display_name);
 
             expect(row.display_name).toBe('ghozali');

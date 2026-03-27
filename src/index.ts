@@ -43,7 +43,7 @@ export function createOerem(config: Knex.Config) {
                     },
 
                     // --- QUERY SELECT ---
-                    async get(): Promise<T[]> {
+                    async get<R extends any[] = T[]>(): Promise<R> {
                         // Cek internal Knex (mengintip state)
                         const statement = (currentQuery as any).toSQL().method;
                         const isInsertOrUpdate = ['insert', 'update', 'delete', 'del', 'first'].includes(statement)
@@ -61,14 +61,14 @@ export function createOerem(config: Knex.Config) {
                             currentQuery.whereNull(deletedAt);
                         }
 
-                        return await (currentQuery as unknown as Promise<T[]>);
+                        return await (currentQuery as unknown as Promise<R>);
                     },
 
-                    async first(): Promise<T | undefined> {
+                    async first<R extends {} = T>(): Promise<R | undefined> {
                         if (options.softDelete) {
                             currentQuery.whereNull(deletedAt);
                         }
-                        return (currentQuery as unknown as Knex.QueryBuilder<T, any>).first();
+                        return (currentQuery as unknown as Knex.QueryBuilder<R, any>).first();
                     },
 
                     async find(id: number | string): Promise<T | undefined> {
