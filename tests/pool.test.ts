@@ -22,7 +22,7 @@ describe('Oerem ORM Unit Test', () => {
 
     // 3. Inisialisasi Model
     const User = db.model<IUser>('users', {
-        fillable: ['username', 'email'], // 'role' sengaja tidak dimasukkan
+        fillable: ['username', 'email'],
         softDelete: true,
         timestamps: true
     });
@@ -48,12 +48,12 @@ describe('Oerem ORM Unit Test', () => {
             const newUser = await User.create({
                 username: 'ghozali',
                 email: 'ghozali@example.com',
-                role: 'admin' // Ini harusnya terfilter karena tidak ada di fillable
+                // role: 'admin' // Ini harusnya terfilter karena tidak ada di fillable
             } as any);
 
             expect(newUser.id).toBe(1);
             expect(newUser.username).toBe('ghozali');
-            expect(newUser.role).toBeUndefined(); // Terfilter oleh applyFillable
+            // expect(newUser.role).toBeUndefined(); // Terfilter oleh applyFillable
             expect(newUser.created_at).toBeDefined();
         });
 
@@ -306,6 +306,59 @@ describe('Oerem ORM Unit Test', () => {
 
             db.connection.removeListener('query', tracker);
         });
+
+        it('should hide attributes defined in hidden options', async () => {
+            const SecretUser = db.model<IUser>('users', {
+                fillable: ['username', 'email', 'role'],
+                hidden: ['role', 'email']
+            });
+
+            await SecretUser.create({ username: 'topsecret', email: 'secret@test.com', role: 'admin' } as any);
+
+            const user = await SecretUser.query(q => q.where('username', 'topsecret')).first();
+
+            expect(user?.username).toBe('topsecret');
+            expect((user as any).email).toBeUndefined(); // Tersembunyi
+            expect((user as any).role).toBeUndefined();  // Tersembunyi
+        });
+
+        it('should block creation and update if a guarded field is present', async () => {
+            const GuardedUser = db.model<IUser>('users', {
+                guarded: ['role'],
+                fillable: ['username', 'role'] // Role ada di fillable tapi di-block oleh guarded
+            });
+
+            // 1. Test Create: Harus melempar error karena ada 'role'
+            await expect(
+                GuardedUser.create({ username: 'normal', role: 'admin' } as any)
+            ).rejects.toThrow(/Cannot write to guarded field/);
+
+            // 2. Buat data yang valid dulu untuk mencoba Update
+            const user = await GuardedUser.create({ username: 'valid_user' });
+            expect(user.username).toBe('valid_user');
+
+            // 3. Test Update: Harus melempar error jika mencoba mengubah 'role'
+            await expect(
+                GuardedUser.update(user.id, { role: 'superadmin' } as any)
+            ).rejects.toThrow(/Cannot write to guarded field/);
+        });
+
+        it('should throw error when creating data with guarded fields', async () => {
+            const GuardedUser = db.model<IUser>('users', { guarded: ['role'] });
+
+            // Gunakan rejects.toThrow untuk mengetes error pada async create
+            await expect(GuardedUser.create({ username: 'hacker', role: 'admin' } as any))
+                .rejects
+                .toThrow(/Cannot write to guarded field/);
+        });
+
+        it('should throw error when field is not in fillable list', async () => {
+            const RestrictedUser = db.model<IUser>('users', { fillable: ['username'] });
+
+            await expect(RestrictedUser.create({ username: 'ali', email: 'ali@test.com' } as any))
+                .rejects
+                .toThrow(/not in fillable list/);
+        });
     });
 
     describe('Knex Native Features Compatibility', () => {
@@ -344,7 +397,6 @@ describe('Oerem ORM Unit Test', () => {
             }[]>();
 
             const row = results[0];
-            console.log(row.display_name);
 
             expect(row.display_name).toBe('ghozali');
             expect(row.contact).toBe('ghozali@test.com');
@@ -417,6 +469,43 @@ describe('Oerem ORM Unit Test', () => {
             // Harusnya 'terhapus' tidak muncul karena global scope whereNull
             const hasDeleted = results.some(u => u.username === 'terhapus');
             expect(hasDeleted).toBe(false);
+        });
+    });
+
+    describe('Oerem Advanced Scopes & Batch', () => {
+
+        it('should perform batch insert with fillable and timestamps', async () => {
+            await User.insert([
+                { username: 'user_a', email: 'a@test.com' },
+                { username: 'user_b', email: 'b@test.com' }
+            ]);
+
+            const count = await User.query(q => q.whereIn('username', ['user_a', 'user_b'])).get();
+            expect(count).toHaveLength(2);
+            expect(count[0].created_at).toBeDefined();
+        });
+
+        it('should include deleted records when using withTrashed()', async () => {
+            // 1. Buat user dan hapus
+            const user = await User.create({ username: 'ghost', email: 'ghost@test.com' });
+            await User.softDelete(user.id);
+
+            // 2. Cek get() biasa (tidak boleh ada)
+            const regular = await User.query(q => q.where('username', 'ghost')).get();
+            expect(regular).toHaveLength(0);
+
+            // 3. Cek withTrashed() (harus ada)
+            const withDeleted = await User.withTrashed().query(q => q.where('username', 'ghost')).get();
+            expect(withDeleted).toHaveLength(1);
+        });
+
+        it('should only return deleted records when using onlyTrashed()', async () => {
+            // user 'ghost' masih ada di DB dalam keadaan terhapus dari test sebelumnya
+            const onlyDeleted = await User.onlyTrashed().get();
+
+            // Pastikan semua yang keluar punya deleted_at
+            expect(onlyDeleted.length).toBeGreaterThan(0);
+            expect(onlyDeleted.every(u => u.deleted_at !== null)).toBe(true);
         });
     });
 
