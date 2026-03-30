@@ -1,5 +1,5 @@
 import { Knex } from "knex";
-import { ModelOptions, SoftDeleteMode } from "./types";
+import { ModelOptions, QueryCallback, SoftDeleteMode, WithCallback, WithInput } from "./types";
 import { controlOutput } from "./helper";
 
 export async function executeGet<R extends any[], T extends {}>(
@@ -7,7 +7,8 @@ export async function executeGet<R extends any[], T extends {}>(
     options: Partial<ModelOptions<T>>,
     tableName: string,
     deletedAt: string,
-    softDeleteMode: SoftDeleteMode
+    softDeleteMode: SoftDeleteMode,
+    withRelations: WithInput[]
 ): Promise<R> {
     // Cek internal Knex (mengintip state)
     const statement = (currentQuery as any).toSQL().method;
@@ -44,6 +45,80 @@ export async function executeGet<R extends any[], T extends {}>(
     }
 
     const results = await currentQuery;
+    const cleanResults = controlOutput(results, options);
 
-    return controlOutput(results, options)
+    if (cleanResults.length === 0 || withRelations.length === 0) {
+        return cleanResults;
+    }
+
+    // 2. Normalisasi withRelations
+    // Contoh: 'posts.comments' -> { posts: (q) => q.with('comments') }
+    const normalized = normalizeWith(withRelations);
+
+    // 3. Eager Loading (Phase "Stitching")
+    for (const [relName, callback] of Object.entries(normalized)) {
+        const relConfig = options.relations?.[relName];
+        if (!relConfig) {
+            throw new Error(`Oerem Error: Relation [${relName}] not defined in model [${tableName}].`);
+        }
+
+        // Ambil Model Anak dari Thunk () => Post
+        const ChildModel = relConfig.modelThunk();
+        const localKey = relConfig.localKey || 'id';
+        const foreignKey = relConfig.foreignKey;
+
+        // Koleksi semua ID unik dari Parent
+        const parentIds = [...new Set(cleanResults.map((p: any) => p[localKey]))].filter(Boolean);
+        if (parentIds.length === 0) continue;
+
+        // Buat Builder baru untuk Anak dan terapkan filter parentIds
+        let childBuilder = ChildModel.query((q: any) => q.whereIn(foreignKey, parentIds));
+
+        // Jalankan callback user jika ada filter tambahan (misal: .orderBy atau .with nested)
+        if (callback) {
+            childBuilder = callback(childBuilder);
+        }
+
+        // Eksekusi Ambil Data Anak (Rekursif terjadi di sini jika ada .with di dalam callback)
+        const childResults = await childBuilder.get();
+
+        // 4. "Menjahit" Data Anak ke Parent
+        cleanResults.forEach((parent: any) => {
+            if (relConfig.type === 'hasMany') {
+                parent[relName] = childResults.filter((c: any) => c[foreignKey] === parent[localKey]);
+            } else if (relConfig.type === 'hasOne' || relConfig.type === 'belongsTo') {
+                parent[relName] = childResults.find((c: any) => c[foreignKey] === parent[localKey]) || null;
+            }
+        });
+    }
+
+    return cleanResults
+}
+
+/**
+ * Fungsi helper untuk mengubah string/array menjadi objek callback seragam
+ */
+function normalizeWith(inputs: WithInput[]): Record<string, WithCallback> {
+    const normalized: Record<string, WithCallback> = {};
+
+    inputs.forEach(input => {
+        if (typeof input === 'string') {
+            // Handle dot notation: 'posts.comments'
+            const parts = input.split('.');
+            const first = parts.shift()!;
+
+            if (parts.length > 0) {
+                // Jika masih ada sisa (nested), buat callback rekursif
+                normalized[first] = (q) => q.with(parts.join('.'));
+            } else {
+                // Relasi biasa tanpa filter
+                normalized[first] = (q) => q;
+            }
+        } else {
+            // Handle objek callback: { posts: (q) => ... }
+            Object.assign(normalized, input);
+        }
+    });
+
+    return normalized;
 }

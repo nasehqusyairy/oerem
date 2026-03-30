@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createOerem } from '../src/index';
+import { createOerem, ModelInstance } from '../src/index';
+import { hasMany } from '../src/helper';
+import { OeremQuery } from '../src/oerem-query';
 
 describe('Oerem ORM Unit Test', () => {
     // 1. Setup koneksi database (In-Memory)
@@ -15,17 +17,47 @@ describe('Oerem ORM Unit Test', () => {
         username: string;
         email: string;
         role: string;
+        posts?: IPost[]
         created_at?: string;
         updated_at?: string;
         deleted_at?: string | null;
+    }
+
+    interface IPost {
+        id: number;
+        user_id: number;
+        title: string;
+        status: string;
+        comments?: IComment[];
+    }
+
+    interface IComment {
+        id: number;
+        post_id: number;
+        user_id: number;
+        content: string;
     }
 
     // 3. Inisialisasi Model
     const User = db.model<IUser>('users', {
         fillable: ['username', 'email'],
         softDelete: true,
-        timestamps: true
+        relations: {
+            posts: hasMany(() => Post, 'user_id')
+        }
     });
+
+    const Post = db.model<IPost>('posts', {
+        fillable: ['user_id', 'title', 'status'],
+        relations: {
+            comments: hasMany(() => Comment, 'post_id')
+        }
+    });
+
+    const Comment = db.model<IComment>('comments', {
+        fillable: ['post_id', 'user_id', 'content']
+    });
+
 
     beforeAll(async () => {
         // Buat tabel users sebelum test dijalankan
@@ -36,6 +68,28 @@ describe('Oerem ORM Unit Test', () => {
             table.string('role').defaultTo('user');
             table.timestamps(true, true);
             table.datetime('deleted_at').nullable();
+        });
+
+        await db.connection.schema.createTable('posts', (table) => {
+            table.increments('id');
+            table.integer('user_id').unsigned();
+            table.string('title');
+            table.string('status');
+            table.timestamps(true, true);
+        });
+
+        await db.connection.schema.createTable('comments', (table) => {
+            table.increments('id');
+            table.integer('post_id').unsigned();
+            table.integer('user_id').unsigned();
+            table.text('content');
+            table.timestamps(true, true);
+        });
+
+        await db.connection.schema.createTable('profiles', (table) => {
+            table.increments('id');
+            table.integer('user_id');
+            table.string('bio');
         });
     });
 
@@ -403,13 +457,6 @@ describe('Oerem ORM Unit Test', () => {
         });
 
         it('should support table aliasing and joins', async () => {
-            // Setup table tambahan untuk join
-            await db.connection.schema.createTable('profiles', (table) => {
-                table.increments('id');
-                table.integer('user_id');
-                table.string('bio');
-            });
-
             await db.connection('profiles').insert({ user_id: 1, bio: 'Fullstack Dev' });
 
             // Testing Table Alias 'u' dan 'p'
@@ -506,6 +553,80 @@ describe('Oerem ORM Unit Test', () => {
             // Pastikan semua yang keluar punya deleted_at
             expect(onlyDeleted.length).toBeGreaterThan(0);
             expect(onlyDeleted.every(u => u.deleted_at !== null)).toBe(true);
+        });
+    });
+
+    describe('Oerem Eager Loading (Relations)', () => {
+
+        beforeAll(async () => {
+
+            // Seeding Data
+            const user = await User.create({ username: 'nasyikh' });
+
+            await Post.insert([
+                { user_id: user.id, title: 'Post Pertama', status: 'published' },
+                { user_id: user.id, title: 'Post Kedua', status: 'draft' },
+                { user_id: 99, title: 'Post Orang Lain', status: 'published' }
+            ]);
+
+            await Comment.insert([
+                { post_id: 1, user_id: user.id, content: 'Komentar untuk Post Pertama' },
+                { post_id: 1, user_id: user.id, content: 'Komentar kedua untuk Post Pertama' },
+                { post_id: 2, user_id: user.id, content: 'Komentar untuk Post Kedua' }
+            ]);
+        });
+
+        it('should load hasMany relationship simply', async () => {
+            const user = await User.query(q => q.where('username', 'nasyikh'))
+                .with('posts')
+                .first();
+
+            expect(user).toBeDefined();
+            expect(user?.posts).toHaveLength(2);
+            expect(user?.posts?.[0].title).toBe('Post Pertama');
+        });
+
+        it('should load relationship with nested query constraints', async () => {
+            const user = await User.query(q => q.where('username', 'nasyikh'))
+                .with({
+                    posts: (q) => q.query((p: OeremQuery<IPost>) => p.where('status', 'published')).with('comments')
+                } as {
+                    posts: (q: ModelInstance<IPost>) => any
+                })
+                .first();
+
+            expect(user?.posts).toHaveLength(1);
+            expect(user?.posts?.[0].status).toBe('published');
+            expect(user?.posts?.[0].title).toBe('Post Pertama');
+
+            // Cek eager loading nested comments
+            const comments = user?.posts?.[0].comments;
+            expect(comments).toHaveLength(2);
+            expect(comments?.[0].content).toBe('Komentar untuk Post Pertama');
+        });
+
+        it('should handle multiple records with eager loading (Anti N+1)', async () => {
+            // Buat user kedua
+            const user2 = await User.create({ username: 'alqusyairy' });
+            await Post.create({ user_id: user2.id, title: 'Post User 2', status: 'published' });
+
+            const users = await User.with('posts').get();
+
+            const u1 = users.find(u => u.username === 'nasyikh');
+            const u2 = users.find(u => u.username === 'alqusyairy');
+
+            expect(u1?.posts).toHaveLength(2);
+            expect(u2?.posts).toHaveLength(1);
+        });
+
+        it('should return null or empty array if no relation found', async () => {
+            const loneUser = await User.create({ username: 'lonely' });
+
+            const user = await User.query(q => q.where('id', loneUser.id))
+                .with('posts')
+                .first();
+
+            expect(user?.posts).toEqual([]);
         });
     });
 

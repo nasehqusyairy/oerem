@@ -1,4 +1,4 @@
-import { ModelOptions } from "./types";
+import { ModelOptions, RelationConfig } from "./types";
 
 export function applySecurity<T extends Record<string, any>>(
     data: Partial<T>,
@@ -55,3 +55,24 @@ export function controlOutput<R extends Record<string, any>[], T extends {}>(
 
     return results;
 }
+
+export const hasMany = (modelThunk: () => any, foreignKey: string, localKey?: string): RelationConfig => ({
+    type: 'hasMany',
+    modelThunk,
+    foreignKey,
+    localKey: localKey || 'id'
+});
+
+export const belongsTo = (modelThunk: () => any, foreignKey: string, ownerKey?: string): RelationConfig => ({
+    type: 'belongsTo',
+    modelThunk,
+    foreignKey,
+    localKey: ownerKey || 'id'
+});
+
+export const hasOne = (modelThunk: () => any, foreignKey: string, localKey?: string): RelationConfig => ({
+    type: 'hasOne',
+    modelThunk,
+    foreignKey,
+    localKey: localKey || 'id'
+});
