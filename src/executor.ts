@@ -2,9 +2,9 @@ import { Knex } from "knex";
 import { ModelOptions, QueryCallback, SoftDeleteMode, WithCallback, WithInput } from "./types";
 import { controlOutput } from "./helper";
 
-export async function executeGet<R extends any[], T extends {}>(
+export async function executeGet<R extends any[], T extends {}, U extends {} = {}>(
     currentQuery: Knex.QueryBuilder<R, any>,
-    options: Partial<ModelOptions<T>>,
+    options: Partial<ModelOptions<T, U>>,
     tableName: string,
     deletedAt: string,
     softDeleteMode: SoftDeleteMode,
@@ -53,41 +53,70 @@ export async function executeGet<R extends any[], T extends {}>(
 
     // 2. Normalisasi withRelations
     // Contoh: 'posts.comments' -> { posts: (q) => q.with('comments') }
-    const normalized = normalizeWith(withRelations);
+    const normalized = normalizeWith(...withRelations);
+    // console.log(withRelations);
+
+    // console.log(normalized);
+
 
     // 3. Eager Loading (Phase "Stitching")
     for (const [relName, callback] of Object.entries(normalized)) {
-        const relConfig = options.relations?.[relName];
+        const relConfig = options.relations?.[relName as keyof U];
         if (!relConfig) {
             throw new Error(`Oerem Error: Relation [${relName}] not defined in model [${tableName}].`);
         }
 
         // Ambil Model Anak dari Thunk () => Post
         const ChildModel = relConfig.modelThunk();
-        const localKey = relConfig.localKey || 'id';
-        const foreignKey = relConfig.foreignKey;
 
-        // Koleksi semua ID unik dari Parent
-        const parentIds = [...new Set(cleanResults.map((p: any) => p[localKey]))].filter(Boolean);
-        if (parentIds.length === 0) continue;
+        /**
+         * LOGIKA PENENTUAN KUNCI (KEY)
+         * - belongsTo: Parent mencari 'user_id' (FK), Child mencari 'id' (PK)
+         * - hasMany/One: Parent mencari 'id' (PK), Child mencari 'user_id' (FK)
+         */
+        const isBelongsTo = relConfig.type === 'belongsTo';
+        const parentKey = isBelongsTo ? relConfig.foreignKey : (relConfig.localKey || 'id');
+        const childKey = isBelongsTo ? (relConfig.localKey || 'id') : relConfig.foreignKey;
 
-        // Buat Builder baru untuk Anak dan terapkan filter parentIds
-        let childBuilder = ChildModel.query((q: any) => q.whereIn(foreignKey, parentIds));
+        // 1. Koleksi semua ID unik dari Parent yang akan dicocokkan
+        const parentIds = [...new Set(cleanResults.map((p: any) => p[parentKey]))].filter(Boolean);
 
-        // Jalankan callback user jika ada filter tambahan (misal: .orderBy atau .with nested)
+        // Jika tidak ada ID di parent, inisialisasi relasi sebagai kosong/null dan skip query
+        if (parentIds.length === 0) {
+            cleanResults.forEach((p: any) => {
+                p[relName] = relConfig.type === 'hasMany' ? [] : null;
+            });
+            continue;
+        }
+
+        // 2. Buat Builder baru untuk Anak
+        // Kita menggunakan childKey untuk memfilter data anak yang berhubungan saja
+        let childBuilder = ChildModel.query((q: any) => {
+            q.whereIn(childKey, parentIds);
+        });
+
+        // 3. Jalankan callback user 
+        // Penting: Di sinilah rekursi terjadi jika di dalam callback ada .with() lagi
         if (callback) {
             childBuilder = callback(childBuilder);
         }
 
-        // Eksekusi Ambil Data Anak (Rekursif terjadi di sini jika ada .with di dalam callback)
+        // 4. Eksekusi Ambil Data Anak
         const childResults = await childBuilder.get();
 
-        // 4. "Menjahit" Data Anak ke Parent
+        // console.log(childResults);
+
+
+        // 5. "Menjahit" Data Anak ke Parent yang Tepat
         cleanResults.forEach((parent: any) => {
+            const pVal = parent[parentKey];
+
             if (relConfig.type === 'hasMany') {
-                parent[relName] = childResults.filter((c: any) => c[foreignKey] === parent[localKey]);
-            } else if (relConfig.type === 'hasOne' || relConfig.type === 'belongsTo') {
-                parent[relName] = childResults.find((c: any) => c[foreignKey] === parent[localKey]) || null;
+                // Filter semua anak yang punya FK cocok dengan PK parent
+                parent[relName] = childResults.filter((c: any) => c[childKey] === pVal);
+            } else {
+                // hasOne atau belongsTo: Ambil satu saja atau null
+                parent[relName] = childResults.find((c: any) => c[childKey] === pVal) || null;
             }
         });
     }
@@ -98,27 +127,43 @@ export async function executeGet<R extends any[], T extends {}>(
 /**
  * Fungsi helper untuk mengubah string/array menjadi objek callback seragam
  */
-function normalizeWith(inputs: WithInput[]): Record<string, WithCallback> {
-    const normalized: Record<string, WithCallback> = {};
+export function normalizeWith(...inputs: any[]): Record<string, any> {
+    // input: ['posts.comments.user', { posts: (p) => p.query(q => q.where('status', 'active')) }, 'profile', 'posts.tags']
+    // output: {
+    //   posts: (childBuilder) => {
+    //     childBuilder.with('comments.user', 'tags');
+    //     childBuilder.query(q => q.where('status', 'active'));
+    //   },
+    //   profile: (childBuilder) => {}
+    // }
 
-    inputs.forEach(input => {
-        if (typeof input === 'string') {
-            // Handle dot notation: 'posts.comments'
-            const parts = input.split('.');
-            const first = parts.shift()!;
+    const registry: Record<string, { children: string[], modifiers: Function[] }> = {};
 
-            if (parts.length > 0) {
-                // Jika masih ada sisa (nested), buat callback rekursif
-                normalized[first] = (q) => q.with(parts.join('.'));
-            } else {
-                // Relasi biasa tanpa filter
-                normalized[first] = (q) => q;
+    inputs.forEach(item => {
+        if (typeof item === 'string') {
+            const [first, ...rest] = item.split('.');
+            if (!registry[first]) registry[first] = { children: [], modifiers: [] };
+            if (rest.length > 0) registry[first].children.push(rest.join('.'));
+        }
+        else if (typeof item === 'object' && item !== null) {
+            for (const [key, val] of Object.entries(item)) {
+                if (!registry[key]) registry[key] = { children: [], modifiers: [] };
+                if (typeof val === 'function') {
+                    registry[key].modifiers.push(val);
+                }
             }
-        } else {
-            // Handle objek callback: { posts: (q) => ... }
-            Object.assign(normalized, input);
         }
     });
 
+    const normalized: Record<string, any> = {};
+    for (const [relName, data] of Object.entries(registry)) {
+        normalized[relName] = (childBuilder: any) => {
+            data.modifiers.forEach(fn => fn(childBuilder));
+            if (data.children.length > 0) {
+                childBuilder.with(...data.children);
+            }
+            return childBuilder;
+        };
+    }
     return normalized;
 }

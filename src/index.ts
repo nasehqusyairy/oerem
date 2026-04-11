@@ -3,18 +3,18 @@ export * from './types';
 import knex, { Knex } from "knex";
 import { OeremQuery } from "./oerem-query";
 import { executeGet } from "./executor";
-import { ModelOptions, QueryCallback, SoftDeleteMode, WithInput } from "./types";
+import { ModelOptions, OeremBuilder, OeremModel, QueryCallback, SoftDeleteMode, WithInput } from "./types";
 import { applySecurity, controlOutput } from "./helper";
 import { ModelRegistry } from './registry';
 
-const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<string, any>>(tableName: string, options: Partial<ModelOptions<T>> = {}) => {
+const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<string, any>, U extends Record<string, any> = {}>(tableName: string, options: Partial<ModelOptions<T, U>> = {}): OeremModel<T, U> => {
     const pk = (options.primaryKey || 'id') as string;
     const deletedAt = options.deletedAtColumn || 'deleted_at';
 
-    // Antrean relasi yang akan diambil
-    let withRelations: WithInput[] = [];
+    const createBuilder = (queryInstance: Knex.QueryBuilder<T, any>): OeremBuilder<T, U> => {
+        // Antrean relasi yang akan diambil
+        let withRelations: WithInput[] = [];
 
-    const createBuilder = (queryInstance: Knex.QueryBuilder<T, any>) => {
         let currentQuery = queryInstance as unknown as OeremQuery<T>;
 
         let softDeleteMode: SoftDeleteMode = 'active';
@@ -31,18 +31,28 @@ const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<strin
                 return this;
             },
 
-            with(...args: WithInput[]) {
+            with(...args: WithInput<U>[]) {
+                // console.log({ outerargs: args });
+
                 withRelations.push(...args);
+
+                // console.log({ outerwith: withRelations });
+
                 return this;
             },
 
             query(callback: QueryCallback<T>) {
-                currentQuery = callback(currentQuery);
+                // currentQuery = callback(currentQuery);
+                callback(currentQuery);
                 return this;
             },
 
+            toSQL() {
+                return (currentQuery as any).toSQL()
+            },
+
             // --- QUERY SELECT ---
-            async get<R extends any[] = T[]>(): Promise<R> {
+            async get<R extends any[] = (T & U)[]>(): Promise<R> {
                 return await executeGet<R, T>(
                     currentQuery as any,
                     options,
@@ -53,7 +63,7 @@ const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<strin
                 );
             },
 
-            async first<R extends {} = T>(): Promise<R | undefined> {
+            async first<R extends {} = T & U>(): Promise<R | undefined> {
                 if (options.softDelete) {
                     currentQuery.whereNull(deletedAt);
                 }
@@ -115,7 +125,7 @@ const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<strin
     };
 
     const instance = {
-        with(...args: WithInput[]) {
+        with(...args: WithInput<U>[]) {
             return createBuilder(connection<T>(tableName)).with(...args);
         },
         query(cb: QueryCallback<T>) {
@@ -155,7 +165,7 @@ const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<strin
     return instance
 }
 
-export type ModelInstance<T extends Record<string, any>> = ReturnType<typeof model> extends (tableName: string, options?: Partial<ModelOptions<T>>) => infer R ? R : never;
+export type ModelInstance<T extends Record<string, any>, U extends Record<string, any>> = ReturnType<typeof model> extends (tableName: string, options?: Partial<ModelOptions<T, U>>) => infer R ? R : never;
 
 export function createOerem(config: Knex.Config) {
     const connection = knex(config);

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createOerem, ModelInstance } from '../src/index';
-import { hasMany } from '../src/helper';
+import { createOerem, ModelInstance, OeremBuilder } from '../src/index';
+import { belongsTo, hasMany } from '../src/helper';
 import { OeremQuery } from '../src/oerem-query';
 
 describe('Oerem ORM Unit Test', () => {
@@ -12,34 +12,45 @@ describe('Oerem ORM Unit Test', () => {
     });
 
     // 2. Definisikan interface untuk testing
-    interface IUser {
+    type IUser = {
         id: number;
         username: string;
         email: string;
         role: string;
-        posts?: IPost[]
+
         created_at?: string;
         updated_at?: string;
         deleted_at?: string | null;
+    } & IUserRelations
+
+    type IUserRelations = {
+        posts?: IPost[]
     }
 
-    interface IPost {
+    type IPost = {
         id: number;
         user_id: number;
         title: string;
         status: string;
+    } & IPostRelations
+
+    type IPostRelations = {
         comments?: IComment[];
     }
 
-    interface IComment {
+    type IComment = {
         id: number;
         post_id: number;
         user_id: number;
         content: string;
+    } & ICommentRelations
+
+    type ICommentRelations = {
+        user?: IUser
     }
 
     // 3. Inisialisasi Model
-    const User = db.model<IUser>('users', {
+    const User = db.model<IUser, IUserRelations>('users', {
         fillable: ['username', 'email'],
         softDelete: true,
         relations: {
@@ -47,15 +58,18 @@ describe('Oerem ORM Unit Test', () => {
         }
     });
 
-    const Post = db.model<IPost>('posts', {
+    const Post = db.model<IPost, IPostRelations>('posts', {
         fillable: ['user_id', 'title', 'status'],
         relations: {
             comments: hasMany(() => Comment, 'post_id')
         }
     });
 
-    const Comment = db.model<IComment>('comments', {
-        fillable: ['post_id', 'user_id', 'content']
+    const Comment = db.model<IComment, ICommentRelations>('comments', {
+        fillable: ['post_id', 'user_id', 'content'],
+        relations: {
+            user: belongsTo(() => User, 'user_id')
+        }
     });
 
 
@@ -562,6 +576,7 @@ describe('Oerem ORM Unit Test', () => {
 
             // Seeding Data
             const user = await User.create({ username: 'nasyikh' });
+            const user2 = await User.create({ username: 'nobel' });
 
             await Post.insert([
                 { user_id: user.id, title: 'Post Pertama', status: 'published' },
@@ -571,27 +586,35 @@ describe('Oerem ORM Unit Test', () => {
 
             await Comment.insert([
                 { post_id: 1, user_id: user.id, content: 'Komentar untuk Post Pertama' },
-                { post_id: 1, user_id: user.id, content: 'Komentar kedua untuk Post Pertama' },
+                { post_id: 1, user_id: user2.id, content: 'Komentar kedua untuk Post Pertama' },
                 { post_id: 2, user_id: user.id, content: 'Komentar untuk Post Kedua' }
             ]);
         });
 
         it('should load hasMany relationship simply', async () => {
             const user = await User.query(q => q.where('username', 'nasyikh'))
-                .with('posts')
+                .with('posts.comments.user')
                 .first();
 
             expect(user).toBeDefined();
             expect(user?.posts).toHaveLength(2);
             expect(user?.posts?.[0].title).toBe('Post Pertama');
+
+            // Cek eager loading nested comments
+            const comments = user?.posts?.[0].comments;
+            expect(comments).toBeDefined();
+            expect(comments?.[0].content).toBe('Komentar untuk Post Pertama');
+
+            // Cek eager loading nested comments.user
+            expect(user?.posts?.[0].comments?.[1].user?.username).toBe('nobel')
         });
 
         it('should load relationship with nested query constraints', async () => {
             const user = await User.query(q => q.where('username', 'nasyikh'))
                 .with({
-                    posts: (q) => q.query((p: OeremQuery<IPost>) => p.where('status', 'published')).with('comments')
-                } as {
-                    posts: (q: ModelInstance<IPost>) => any
+                    posts: (p: OeremBuilder<IPost, IPostRelations>) => p.query(q => q.where('status', 'published')).with({
+                        comments: (c: OeremBuilder<IComment, ICommentRelations>) => c.query(q => q.whereLike('content', '%kedua%')).with('user')
+                    })
                 })
                 .first();
 
@@ -601,8 +624,10 @@ describe('Oerem ORM Unit Test', () => {
 
             // Cek eager loading nested comments
             const comments = user?.posts?.[0].comments;
-            expect(comments).toHaveLength(2);
-            expect(comments?.[0].content).toBe('Komentar untuk Post Pertama');
+            expect(comments).toHaveLength(1);
+            expect(comments?.[0].content).toBe('Komentar kedua untuk Post Pertama');
+
+            expect(user?.posts?.[0].comments?.[0].user?.username).toBe('nobel')
         });
 
         it('should handle multiple records with eager loading (Anti N+1)', async () => {
@@ -610,7 +635,7 @@ describe('Oerem ORM Unit Test', () => {
             const user2 = await User.create({ username: 'alqusyairy' });
             await Post.create({ user_id: user2.id, title: 'Post User 2', status: 'published' });
 
-            const users = await User.with('posts').get();
+            const users = await User.with('posts.comments').get();
 
             const u1 = users.find(u => u.username === 'nasyikh');
             const u2 = users.find(u => u.username === 'alqusyairy');
