@@ -1,5 +1,11 @@
 import { Knex } from "knex";
-import { ModelOptions, QueryCallback, SoftDeleteMode, WithCallback, WithInput } from "./types";
+import {
+    ModelOptions,
+    // QueryCallback,
+    SoftDeleteMode,
+    WithCallback,
+    WithInput
+} from "./types";
 import { controlOutput } from "./helper";
 
 export async function executeGet<R extends any[], T extends {}, U extends {} = {}>(

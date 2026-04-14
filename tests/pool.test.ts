@@ -21,6 +21,8 @@ describe('Oerem ORM Unit Test', () => {
         email: string;
         role: string;
 
+        balance: number;
+
         created_at?: string;
         updated_at?: string;
         deleted_at?: string | null;
@@ -54,7 +56,7 @@ describe('Oerem ORM Unit Test', () => {
 
     // 3. Inisialisasi Model
     const User = db.model<IUser, IUserRelations>('users', {
-        fillable: ['username', 'email'],
+        fillable: ['username', 'email', 'balance'],
         softDelete: true,
         relations: {
             posts: hasMany(() => Post, 'user_id')
@@ -77,16 +79,17 @@ describe('Oerem ORM Unit Test', () => {
 
     beforeAll(async () => {
         // Buat tabel users sebelum test dijalankan
-        await db.connection.schema.createTable('users', (table) => {
+        await db.getConnection().schema.createTable('users', (table) => {
             table.increments('id').primary();
             table.string('username');
             table.string('email');
             table.string('role').defaultTo('user');
+            table.integer('balance').defaultTo(0);
             table.timestamps(true, true);
             table.datetime('deleted_at').nullable();
         });
 
-        await db.connection.schema.createTable('posts', (table) => {
+        await db.getConnection().schema.createTable('posts', (table) => {
             table.increments('id');
             table.integer('user_id').unsigned();
             table.string('title');
@@ -94,7 +97,7 @@ describe('Oerem ORM Unit Test', () => {
             table.timestamps(true, true);
         });
 
-        await db.connection.schema.createTable('comments', (table) => {
+        await db.getConnection().schema.createTable('comments', (table) => {
             table.increments('id');
             table.integer('post_id').unsigned();
             table.integer('user_id').unsigned();
@@ -102,7 +105,7 @@ describe('Oerem ORM Unit Test', () => {
             table.timestamps(true, true);
         });
 
-        await db.connection.schema.createTable('profiles', (table) => {
+        await db.getConnection().schema.createTable('profiles', (table) => {
             table.increments('id');
             table.integer('user_id');
             table.string('bio');
@@ -161,7 +164,7 @@ describe('Oerem ORM Unit Test', () => {
             await User.softDelete(2);
 
             const allUsers = await User.all();
-            const deletedUser = await db.connection('users').where('id', 2).first();
+            const deletedUser = await db.getConnection().table('users').where('id', 2).first();
 
             // Di hasil ORM harusnya cuma sisa 1 (si ghozali)
             expect(allUsers).toHaveLength(1);
@@ -210,7 +213,7 @@ describe('Oerem ORM Unit Test', () => {
             expect(check).toHaveLength(0);
 
             // Verifikasi di DB aslinya memang benar-benar hilang (bukan soft delete)
-            const dbCheck = await db.connection('users').where('username', 'spam_user').first();
+            const dbCheck = await db.getConnection().table('users').where('username', 'spam_user').first();
             expect(dbCheck).toBeUndefined();
         });
 
@@ -225,7 +228,7 @@ describe('Oerem ORM Unit Test', () => {
             expect(isExistInResults).toBe(false);
 
             // Verifikasi di database masih ada tapi punya timestamp deleted_at
-            const dbCheck = await db.connection('users').where('username', 'temp_user').first();
+            const dbCheck = await db.getConnection().table('users').where('username', 'temp_user').first();
             expect(dbCheck.deleted_at).not.toBeNull();
         });
 
@@ -282,7 +285,7 @@ describe('Oerem ORM Unit Test', () => {
                 .toThrow("Oerem: Illegal write operation detected in a read query!");
 
             // Verifikasi data benar-benar tidak masuk ke database
-            const checkDb = await db.connection('users').where('username', 'hacker').first();
+            const checkDb = await db.getConnection().table('users').where('username', 'hacker').first();
             expect(checkDb).toBeUndefined();
         });
 
@@ -335,7 +338,7 @@ describe('Oerem ORM Unit Test', () => {
                 capturedSql = obj.sql;
             };
 
-            db.connection.on('query', queryTracker);
+            db.getConnection().on('query', queryTracker);
 
             // 2. Tahap Persiapan: Buat rangkaian query (chaining)
             // Di sini kita hanya membangun objek, belum mengeksekusi.
@@ -353,13 +356,13 @@ describe('Oerem ORM Unit Test', () => {
             expect(capturedSql).toContain('`username` = ?');
 
             // Cleanup listener agar tidak bocor ke test case lain
-            db.connection.removeListener('query', queryTracker);
+            db.getConnection().removeListener('query', queryTracker);
         });
 
         it('should block illegal query before it even reaches the database', async () => {
             let sqlSentToDb = false;
             const tracker = () => { sqlSentToDb = true; };
-            db.connection.on('query', tracker);
+            db.getConnection().on('query', tracker);
 
             // Skenario: User mencoba menyisipkan update di dalam read query
             const illegalUpdate = User.query(q => (q as any).update({ username: 'hacker' }));
@@ -374,7 +377,7 @@ describe('Oerem ORM Unit Test', () => {
 
             expect(sqlSentToDb, 'Query ilegal tidak boleh sampai menyentuh database').toBe(false);
 
-            db.connection.removeListener('query', tracker);
+            db.getConnection().removeListener('query', tracker);
         });
 
         it('should hide attributes defined in hidden options', async () => {
@@ -488,7 +491,7 @@ describe('Oerem ORM Unit Test', () => {
         //         bio: 'Fullstack Dev'
         //     });
 
-        //     await db.connection.schema.dropTable('profiles');
+        //     await db.getConnection().schema.dropTable('profiles');
         // });
 
         it('should support knex.raw for complex expressions', async () => {
@@ -496,7 +499,7 @@ describe('Oerem ORM Unit Test', () => {
             const results = await User.query(q => {
                 return q.select(
                     'username',
-                    db.raw('LENGTH(username) as name_length')
+                    db.getConnection().raw('LENGTH(username) as name_length')
                 ).where('id', 1);
             }).get();
 
@@ -615,7 +618,7 @@ describe('Oerem ORM Unit Test', () => {
             const results = await User.query(q =>
                 q.select('username')
                     .groupBy('username')
-                    .having(db.raw('COUNT(id)'), '>', 0)
+                    .having(db.getConnection().raw('COUNT(id)'), '>', 0)
             ).get();
 
             expect(results.length).toBeGreaterThan(0);
@@ -766,5 +769,53 @@ describe('Oerem ORM Unit Test', () => {
             expect(user?.posts).toEqual([]);
         });
     });
+
+    // transaction test
+    describe('Oerem Transactions', () => {
+
+        it('should commit changes when transaction is successful', async () => {
+            await db.transaction(async () => {
+                await db.getConnection().table('users').insert({
+                    username: 'alice',
+                    balance: 100
+                });
+            });
+
+            const user = await db.getConnection().table('users').where('username', 'alice').first();
+            expect(user).toBeDefined();
+            expect(user.balance).toBe(100);
+        });
+
+        it('should work with Oerem Model factory (Injected Connection)', async () => {
+
+            await db.transaction(async () => {
+                await User.create({ username: 'charlie', balance: 200 });
+            });
+
+            const charlie = await db.getConnection().table('users').where('username', 'charlie').first();
+            expect(charlie.balance).toBe(200);
+        });
+
+        it('should rollback all changes if any operation within the transaction fails', async () => {
+            try {
+                await db.transaction(async () => {
+                    await User.create({ username: 'dave', balance: 300 });
+                    await db.getConnection().table('users').insert({
+                        username: 'bob',
+                        balance: 500
+                    });
+                    // Paksa error setelah beberapa operasi sukses
+                    throw new Error('Forced Error to Test Rollback');
+                });
+            } catch (e) {
+                // Error ditangkap di sini
+            }
+
+            const dave = await db.getConnection().table('users').where('username', 'dave').first();
+            const bob = await db.getConnection().table('users').where('username', 'bob').first();
+            expect(dave).toBeUndefined(); // Harusnya tidak ada karena rollback
+            expect(bob).toBeUndefined(); // Harusnya tidak ada karena rollback
+        });
+    })
 
 })

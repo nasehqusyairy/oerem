@@ -1,4 +1,5 @@
-import { OeremQuery } from "./oerem-query";
+import { Knex } from "knex";
+// import { OeremQuery } from "./oerem-query";
 
 // 1. Konfigurasi Utama Model
 // export interface ModelOptions<T extends {}, R extends Record<string, any> = {}> {
@@ -13,7 +14,7 @@ import { OeremQuery } from "./oerem-query";
 // }
 
 // 2. Type untuk Callback Query
-export type QueryCallback<T extends {}> = (q: OeremQuery<T>) => OeremQuery<T>;
+// export type QueryCallback<T extends {}> = (q: OeremQuery<T>) => OeremQuery<T>;
 
 // 3. State untuk Soft Delete (Internal Builder)
 export type SoftDeleteMode = 'active' | 'with' | 'only';
@@ -90,7 +91,8 @@ export interface OeremBuilder<T extends Record<string, any>, U extends Record<st
     with(...args: any[]): this;
 
     // Querying
-    query(callback: (query: OeremQuery<T>) => OeremQuery<T>): this;
+    // query(callback: (query: OeremQuery<T>) => OeremQuery<T>): this;
+    query(callback: (q: Knex.QueryBuilder<T>) => Knex.QueryBuilder<T>): this;
 
     // Execution (Return T & U untuk menggabungkan field asli + field relasi)
     get<R extends any[] = (T & U)[]>(): Promise<R>;
@@ -124,7 +126,9 @@ export interface OeremModel<T extends Record<string, any>, U extends Record<stri
     // 5. Support untuk banyak argumen sekaligus
     with(...args: any[]): OeremBuilder<T, U>;
 
-    query(cb: (query: OeremQuery<T>) => OeremQuery<T>): OeremBuilder<T, U>;
+    // query(cb: (query: OeremQuery<T>) => OeremQuery<T>): OeremBuilder<T, U>;
+    query(callback: (q: Knex.QueryBuilder<T>) => Knex.QueryBuilder<T>): OeremBuilder<T, U>;
+
     withTrashed(): OeremBuilder<T, U>;
     onlyTrashed(): OeremBuilder<T, U>;
 
