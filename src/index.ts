@@ -15,6 +15,7 @@ const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<strin
         // Antrean relasi yang akan diambil
         let withRelations: WithInput[] = [];
 
+        // let currentQuery = queryInstance as unknown as OeremQuery<T>;
         let currentQuery = queryInstance as unknown as OeremQuery<T>;
 
         let softDeleteMode: SoftDeleteMode = 'active';
@@ -165,13 +166,14 @@ const model = (connection: knex.Knex<any, unknown[]>) => <T extends Record<strin
     return instance
 }
 
-export type ModelInstance<T extends Record<string, any>, U extends Record<string, any>> = ReturnType<typeof model> extends (tableName: string, options?: Partial<ModelOptions<T, U>>) => infer R ? R : never;
+// export type ModelInstance<T extends Record<string, any>, U extends Record<string, any>> = ReturnType<typeof model> extends (tableName: string, options?: Partial<ModelOptions<T, U>>) => infer R ? R : never;
 
 export function createOerem(config: Knex.Config) {
     const connection = knex(config);
 
     return {
         connection,
+        raw: connection.raw.bind(connection),
         model: model(connection),
         async close() { await connection.destroy(); }
     };
