@@ -4,7 +4,7 @@ import {
     // ModelInstance,
     OeremBuilder
 } from '../src/index';
-import { belongsTo, hasMany } from '../src/helper';
+import { belongsTo, belongsToMany, hasMany } from '../src/helper';
 
 describe('Oerem ORM Unit Test', () => {
     // 1. Setup koneksi database (In-Memory)
@@ -15,6 +15,20 @@ describe('Oerem ORM Unit Test', () => {
     });
 
     // 2. Definisikan interface untuk testing
+    type IRole = {
+        id: number;
+        name: string;
+    } & IRoleRelations
+
+    type IRoleRelations = {
+        users?: (IUser & {
+            pivot?: {
+                user_id: number;
+                role_id: number;
+            }
+        })[]
+    }
+
     type IUser = {
         id: number;
         username: string;
@@ -30,6 +44,12 @@ describe('Oerem ORM Unit Test', () => {
 
     type IUserRelations = {
         posts?: IPost[]
+        roles?: (IRole & {
+            pivot?: {
+                user_id: number;
+                role_id: number;
+            }
+        })[]
     }
 
     type IPost = {
@@ -55,11 +75,19 @@ describe('Oerem ORM Unit Test', () => {
     }
 
     // 3. Inisialisasi Model
+    const Role = db.model<IRole, IRoleRelations>('roles', {
+        fillable: ['name'],
+        relations: {
+            users: belongsToMany(() => User, 'role_user', 'role_id', 'user_id')
+        }
+    });
+
     const User = db.model<IUser, IUserRelations>('users', {
         fillable: ['username', 'email', 'balance'],
         softDelete: true,
         relations: {
-            posts: hasMany(() => Post, 'user_id')
+            posts: hasMany(() => Post, 'user_id'),
+            roles: belongsToMany(() => Role, 'role_user', 'user_id', 'role_id')
         }
     });
 
@@ -83,10 +111,21 @@ describe('Oerem ORM Unit Test', () => {
             table.increments('id').primary();
             table.string('username');
             table.string('email');
-            table.string('role').defaultTo('user');
+            // table.string('role').defaultTo('user');
             table.integer('balance').defaultTo(0);
             table.timestamps(true, true);
             table.datetime('deleted_at').nullable();
+        });
+
+        await db.getConnection().schema.createTable('roles', (table) => {
+            table.increments('id');
+            table.string('name');
+            table.timestamps(true, true)
+        });
+
+        await db.getConnection().schema.createTable('role_user', (table) => {
+            table.integer('user_id');
+            table.integer('role_id');
         });
 
         await db.getConnection().schema.createTable('posts', (table) => {
@@ -382,11 +421,11 @@ describe('Oerem ORM Unit Test', () => {
 
         it('should hide attributes defined in hidden options', async () => {
             const SecretUser = db.model<IUser>('users', {
-                fillable: ['username', 'email', 'role'],
-                hidden: ['role', 'email']
+                fillable: ['username', 'email'],
+                hidden: ['email']
             });
 
-            await SecretUser.create({ username: 'topsecret', email: 'secret@test.com', role: 'admin' } as any);
+            await SecretUser.create({ username: 'topsecret', email: 'secret@test.com' } as any);
 
             const user = await SecretUser.query(q => q.where('username', 'topsecret')).first();
 
@@ -397,13 +436,13 @@ describe('Oerem ORM Unit Test', () => {
 
         it('should block creation and update if a guarded field is present', async () => {
             const GuardedUser = db.model<IUser>('users', {
-                guarded: ['role'],
-                fillable: ['username', 'role'] // Role ada di fillable tapi di-block oleh guarded
+                guarded: ['balance'],
+                fillable: ['username', 'balance'] // Role ada di fillable tapi di-block oleh guarded
             });
 
             // 1. Test Create: Harus melempar error karena ada 'role'
             await expect(
-                GuardedUser.create({ username: 'normal', role: 'admin' } as any)
+                GuardedUser.create({ username: 'normal', balance: 1000 })
             ).rejects.toThrow(/Cannot write to guarded field/);
 
             // 2. Buat data yang valid dulu untuk mencoba Update
@@ -412,17 +451,8 @@ describe('Oerem ORM Unit Test', () => {
 
             // 3. Test Update: Harus melempar error jika mencoba mengubah 'role'
             await expect(
-                GuardedUser.update(user.id, { role: 'superadmin' } as any)
+                GuardedUser.update(user.id, { balance: 2000 })
             ).rejects.toThrow(/Cannot write to guarded field/);
-        });
-
-        it('should throw error when creating data with guarded fields', async () => {
-            const GuardedUser = db.model<IUser>('users', { guarded: ['role'] });
-
-            // Gunakan rejects.toThrow untuk mengetes error pada async create
-            await expect(GuardedUser.create({ username: 'hacker', role: 'admin' } as any))
-                .rejects
-                .toThrow(/Cannot write to guarded field/);
         });
 
         it('should throw error when field is not in fillable list', async () => {
@@ -767,6 +797,38 @@ describe('Oerem ORM Unit Test', () => {
                 .first();
 
             expect(user?.posts).toEqual([]);
+        });
+
+        it('should eager load many-to-many relations correctly', async () => {
+            // Seed data
+            const adminRole = await Role.create({ name: 'admin' });
+            const editorRole = await Role.create({ name: 'editor' });
+            const user = await User.create({ username: 'm2mtest' });
+
+            // Link ke pivot
+            await db.getConnection().table('role_user').insert([
+                { user_id: user.id, role_id: adminRole.id },
+                { user_id: user.id, role_id: editorRole.id }
+            ]);
+
+            // Execute Eager Loading
+            const result = await User.query(q => q.where('id', user.id))
+                .with('roles')
+                .first();
+
+            expect(result).toBeDefined();
+            expect(result?.roles).toHaveLength(2);
+            expect(result?.roles?.map((r: any) => r.name)).toContain('admin');
+            expect(result?.roles?.map((r: any) => r.name)).toContain('editor');
+
+            // Pastikan child memiliki properti pivot yang benar
+            const pivot = (result?.roles?.[0] as any).pivot;
+            expect(pivot).toBeDefined();
+            expect(pivot.user_id).toBe(user.id);
+            expect([adminRole.id, editorRole.id]).toContain(pivot.role_id);
+
+            // Pastikan kolom temporary _pivot_parent_id sudah dihapus dari output bersih
+            expect((result?.roles?.[0] as any)._pivot_parent_id).toBeUndefined();
         });
     });
 

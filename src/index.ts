@@ -133,6 +133,7 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
     };
 
     const instance: OeremModel<T, U> = {
+        tableName,
         with(...args) {
             return createBuilder(getConnection()<T>(tableName)).with(...args);
         },

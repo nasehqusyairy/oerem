@@ -76,3 +76,20 @@ export const hasOne = (modelThunk: () => any, foreignKey: string, localKey?: str
     foreignKey,
     localKey: localKey || 'id'
 });
+
+export const belongsToMany = (
+    modelThunk: () => any,
+    pivotTable: string,
+    foreignPivotKey: string,
+    relatedPivotKey: string,
+    parentKey?: string,
+    foreignKey?: string
+): RelationConfig => ({
+    type: 'belongsToMany',
+    modelThunk,
+    pivotTable,
+    foreignPivotKey, // Kolom di pivot yang merujuk ke Parent
+    relatedPivotKey, // Kolom di pivot yang merujuk ke Child
+    localKey: parentKey || 'id', // PK di Parent
+    foreignKey: foreignKey || 'id' // PK di Child
+});

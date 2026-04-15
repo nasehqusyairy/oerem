@@ -21,13 +21,16 @@ export type SoftDeleteMode = 'active' | 'with' | 'only';
 
 // src/types.ts
 
-export type RelationType = 'hasMany' | 'hasOne' | 'belongsTo';
+export type RelationType = 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany';
 
 export interface RelationConfig {
     type: RelationType;
     modelThunk: () => any; // Fungsi () => Post
     foreignKey: string;
     localKey?: string;
+    pivotTable?: string; // Untuk belongsToMany
+    foreignPivotKey?: string; // Untuk belongsToMany
+    relatedPivotKey?: string; // Untuk belongsToMany
 }
 
 // Helper untuk builder .with()
@@ -108,7 +111,7 @@ export interface OeremBuilder<T extends Record<string, any>, U extends Record<st
 
 // --- MODEL INSTANCE INTERFACE ---
 export interface OeremModel<T extends Record<string, any>, U extends Record<string, any> = {}> {
-
+    tableName: string
     // Entry points yang menghasilkan Builder
     // 1. Autocomplete untuk satu key (User.with('posts'))
     with(relation: keyof U & string): OeremBuilder<T, U>;

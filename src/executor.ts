@@ -80,9 +80,9 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
          * - belongsTo: Parent mencari 'user_id' (FK), Child mencari 'id' (PK)
          * - hasMany/One: Parent mencari 'id' (PK), Child mencari 'user_id' (FK)
          */
+        const isBelongsToMany = relConfig.type === 'belongsToMany';
         const isBelongsTo = relConfig.type === 'belongsTo';
-        const parentKey = isBelongsTo ? relConfig.foreignKey : (relConfig.localKey || 'id');
-        const childKey = isBelongsTo ? (relConfig.localKey || 'id') : relConfig.foreignKey;
+        const parentKey = isBelongsToMany ? (relConfig.localKey || 'id') : (isBelongsTo ? relConfig.foreignKey : (relConfig.localKey || 'id'));
 
         // 1. Koleksi semua ID unik dari Parent yang akan dicocokkan
         const parentIds = [...new Set(cleanResults.map((p: any) => p[parentKey]))].filter(Boolean);
@@ -90,16 +90,43 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
         // Jika tidak ada ID di parent, inisialisasi relasi sebagai kosong/null dan skip query
         if (parentIds.length === 0) {
             cleanResults.forEach((p: any) => {
-                p[relName] = relConfig.type === 'hasMany' ? [] : null;
+                p[relName] = (relConfig.type === 'hasMany' || relConfig.type === 'belongsToMany') ? [] : null;
             });
             continue;
         }
 
-        // 2. Buat Builder baru untuk Anak
-        // Kita menggunakan childKey untuk memfilter data anak yang berhubungan saja
-        let childBuilder = ChildModel.query((q: any) => {
-            q.whereIn(childKey, parentIds);
-        });
+        let childBuilder: any;
+        const childKey = isBelongsTo ? (relConfig.localKey || 'id') : relConfig.foreignKey;
+
+
+        if (isBelongsToMany) {
+            childBuilder = ChildModel.query((q: any) => {
+                q.join(
+                    relConfig.pivotTable!,
+                    `${ChildModel.tableName}.${relConfig.relatedKey || 'id'}`,
+                    '=',
+                    `${relConfig.pivotTable}.${relConfig.relatedPivotKey}`
+                );
+
+                // Ambil semua kolom dari tabel child
+                q.select(`${ChildModel.tableName}.*`);
+
+                // Ambil SEMUA kolom dari tabel pivot dan beri prefix agar tidak bentrok
+                // Atau setidaknya ambil foreignPivotKey untuk mapping
+                q.select(`${relConfig.pivotTable}.*`);
+
+                // Kita tetap butuh alias khusus untuk mapping IDs
+                q.select(`${relConfig.pivotTable}.${relConfig.foreignPivotKey} as _pivot_parent_id`);
+
+                q.whereIn(`${relConfig.pivotTable}.${relConfig.foreignPivotKey}`, parentIds);
+            });
+        } else {
+            // 2. Buat Builder baru untuk Anak
+            // Kita menggunakan childKey untuk memfilter data anak yang berhubungan saja
+            childBuilder = ChildModel.query((q: any) => {
+                q.whereIn(childKey, parentIds);
+            });
+        }
 
         // 3. Jalankan callback user 
         // Penting: Di sinilah rekursi terjadi jika di dalam callback ada .with() lagi
@@ -117,7 +144,33 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
         cleanResults.forEach((parent: any) => {
             const pVal = parent[parentKey];
 
-            if (relConfig.type === 'hasMany') {
+            if (relConfig.type === 'belongsToMany') {
+                // 1. Ambil semua baris yang cocok
+                const matchingChildren = childResults.filter((c: any) => c._pivot_parent_id === pVal);
+
+                parent[relName] = matchingChildren.map((c: any) => {
+                    // 2. Clone objek agar tidak merusak data asli jika satu child punya banyak parent
+                    const childClone = { ...c };
+
+                    // 3. Pindahkan data pivot ke objek 'pivot'
+                    // Kita bisa menentukan kolom mana saja yang masuk ke pivot
+                    // Untuk simplisitas, kita ambil foreignPivotKey dan relatedPivotKey
+                    childClone.pivot = {
+                        [relConfig.foreignPivotKey]: c[relConfig.foreignPivotKey],
+                        [relConfig.relatedPivotKey]: c[relConfig.relatedPivotKey],
+                    };
+
+                    // Jika ada kolom tambahan di pivot (misal 'status', 'created_at')
+                    // Kamu bisa menambahkannya ke sini. 
+
+                    // 4. Bersihkan kolom temporary dan kolom pivot dari level root objek child
+                    delete childClone._pivot_parent_id;
+                    // delete childClone[relConfig.foreignPivotKey]; // Opsional jika ingin root bersih
+                    // delete childClone[relConfig.relatedPivotKey];
+
+                    return childClone;
+                });
+            } else if (relConfig.type === 'hasMany') {
                 // Filter semua anak yang punya FK cocok dengan PK parent
                 parent[relName] = childResults.filter((c: any) => c[childKey] === pVal);
             } else {
