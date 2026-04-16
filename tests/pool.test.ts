@@ -33,7 +33,6 @@ describe('Oerem ORM Unit Test', () => {
         id: number;
         username: string;
         email: string;
-        role: string;
 
         balance: number;
 
@@ -799,36 +798,58 @@ describe('Oerem ORM Unit Test', () => {
             expect(user?.posts).toEqual([]);
         });
 
-        it('should eager load many-to-many relations correctly', async () => {
-            // Seed data
+        it('should handle many-to-many manipulation via .related() method', async () => {
+            // 1. Seed data awal (Model Role dan User)
             const adminRole = await Role.create({ name: 'admin' });
             const editorRole = await Role.create({ name: 'editor' });
-            const user = await User.create({ username: 'm2mtest' });
+            const viewerRole = await Role.create({ name: 'viewer' });
+            const user = await User.create({ username: 'm2m_related_test' });
 
-            // Link ke pivot
-            await db.getConnection().table('role_user').insert([
-                { user_id: user.id, role_id: adminRole.id },
-                { user_id: user.id, role_id: editorRole.id }
-            ]);
+            // 2. Testing ATTACH via .related()
+            // Kita panggil .related() dari instance 'user' yang baru dibuat
+            await (user as any).related({
+                roles: async (r: any) => {
+                    await r.attach([adminRole.id, editorRole.id]);
+                }
+            });
 
-            // Execute Eager Loading
+            // 3. Verifikasi Eager Loading & Pivot
             const result = await User.query(q => q.where('id', user.id))
                 .with('roles')
                 .first();
 
             expect(result).toBeDefined();
             expect(result?.roles).toHaveLength(2);
-            expect(result?.roles?.map((r: any) => r.name)).toContain('admin');
-            expect(result?.roles?.map((r: any) => r.name)).toContain('editor');
 
-            // Pastikan child memiliki properti pivot yang benar
-            const pivot = (result?.roles?.[0] as any).pivot;
-            expect(pivot).toBeDefined();
-            expect(pivot.user_id).toBe(user.id);
-            expect([adminRole.id, editorRole.id]).toContain(pivot.role_id);
+            // Cek keberadaan objek pivot
+            const firstRole = result?.roles?.[0] as any;
+            expect(firstRole.pivot).toBeDefined();
+            expect(firstRole.pivot.user_id).toBe(user.id);
 
-            // Pastikan kolom temporary _pivot_parent_id sudah dihapus dari output bersih
-            expect((result?.roles?.[0] as any)._pivot_parent_id).toBeUndefined();
+            // 4. Testing DETACH & CREATE via .related() dalam satu blok
+            // Skenario: Hapus satu role, dan buat role baru sekaligus attach
+            await (result as any).related({
+                roles: async (r: any) => {
+                    await r.detach(adminRole.id); // Hapus admin
+                    await r.create({ name: 'super_admin' }); // Buat baru & otomatis attach
+                }
+            });
+
+            // 5. Verifikasi Akhir
+            const finalResult = await User.query(q => q.where('id', user.id))
+                .with('roles')
+                .first();
+
+            const roleNames = finalResult?.roles?.map((r: any) => r.name);
+            expect(roleNames).not.toContain('admin');
+            expect(roleNames).toContain('editor');
+            expect(roleNames).toContain('super_admin');
+            expect(finalResult?.roles).toHaveLength(2);
+
+            // 6. Pastikan .related() TIDAK muncul saat JSON stringify
+            const jsonString = JSON.stringify(finalResult);
+            const parsed = JSON.parse(jsonString);
+            expect(parsed.related).toBeUndefined(); // Harus bersih!
         });
     });
 

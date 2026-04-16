@@ -3,7 +3,7 @@ export * from './types';
 import { AsyncLocalStorage } from 'async_hooks';
 import knex, { Knex } from "knex";
 // import { OeremQuery } from "./oerem-query";
-import { executeGet } from "./executor";
+import { executeGet, wrapOutput } from "./executor";
 import {
     ModelOptions,
     OeremBuilder,
@@ -19,7 +19,7 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
     const pk = (options.primaryKey || 'id') as string;
     const deletedAt = options.deletedAtColumn || 'deleted_at';
 
-    const createBuilder = (queryInstance: Knex.QueryBuilder<T, any>): OeremBuilder<T, U> => {
+    const createBuilder = (modelInstance: OeremModel<T, U>, queryInstance: Knex.QueryBuilder<T, any>): OeremBuilder<T, U> => {
 
         // Antrean relasi yang akan diambil
         let withRelations: WithInput[] = [];
@@ -67,7 +67,8 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
                     tableName,
                     deletedAt as string,
                     softDeleteMode,
-                    withRelations
+                    withRelations,
+                    getConnection
                 );
             },
 
@@ -93,7 +94,10 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
                 }
 
                 const [insertedId] = await getConnection()(tableName).insert(payload);
-                return { [pk]: data[pk as keyof T] || insertedId, ...payload } as unknown as T;
+                const results = [{ [pk]: data[pk as keyof T] || insertedId, ...payload } as unknown as T];
+                wrapOutput(results, options, getConnection);
+
+                return results[0];
             },
 
             async update(data: Partial<T>) {
@@ -135,38 +139,38 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
     const instance: OeremModel<T, U> = {
         tableName,
         with(...args) {
-            return createBuilder(getConnection()<T>(tableName)).with(...args);
+            return createBuilder(this, getConnection()<T>(tableName)).with(...args);
         },
         // query(cb: QueryCallback<T>) {
         query(cb) {
-            return createBuilder(getConnection()<T>(tableName)).query(cb);
+            return createBuilder(this, getConnection()<T>(tableName)).query(cb);
         },
         all() {
-            return createBuilder(getConnection()<T>(tableName)).get();
+            return createBuilder(this, getConnection()<T>(tableName)).get();
         },
         find(id) {
-            return createBuilder(getConnection()<T>(tableName)).query(q => q.where(pk, id)).first();
+            return createBuilder(this, getConnection()<T>(tableName)).query(q => q.where(pk, id)).first();
         },
         withTrashed() {
-            return createBuilder(getConnection()<T>(tableName)).withTrashed();
+            return createBuilder(this, getConnection()<T>(tableName)).withTrashed();
         },
         onlyTrashed() {
-            return createBuilder(getConnection()<T>(tableName)).onlyTrashed();
+            return createBuilder(this, getConnection()<T>(tableName)).onlyTrashed();
         },
         create(data) {
-            return createBuilder(getConnection()<T>(tableName)).create(data);
+            return createBuilder(this, getConnection()<T>(tableName)).create(data);
         },
         insert(records) {
-            return createBuilder(getConnection()<T>(tableName)).insert(records);
+            return createBuilder(this, getConnection()<T>(tableName)).insert(records);
         },
         update(id, data) {
-            return createBuilder(getConnection()<T>(tableName)).query(q => q.where(pk, id)).update(data);
+            return createBuilder(this, getConnection()<T>(tableName)).query(q => q.where(pk, id)).update(data);
         },
         delete(id) {
-            return createBuilder(getConnection()<T>(tableName)).query(q => q.where(pk, id)).delete();
+            return createBuilder(this, getConnection()<T>(tableName)).query(q => q.where(pk, id)).delete();
         },
         softDelete(id) {
-            return createBuilder(getConnection()<T>(tableName)).query(q => q.where(pk, id)).softDelete();
+            return createBuilder(this, getConnection()<T>(tableName)).query(q => q.where(pk, id)).softDelete();
         }
     };
 
