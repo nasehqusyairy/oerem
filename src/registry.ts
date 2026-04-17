@@ -1,7 +1,9 @@
-const models = new Map<string, any>();
+import { OeremModel } from "./types";
+
+const models = new Map<string, OeremModel<Record<string, unknown>, Record<string, unknown>>>();
 
 export const ModelRegistry = {
-    register(name: string, model: any) {
+    register(name: string, model: OeremModel<Record<string, unknown>, Record<string, unknown>>) {
         models.set(name, model);
     },
 

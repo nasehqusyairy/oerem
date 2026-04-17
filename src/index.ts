@@ -2,27 +2,27 @@ export * from './types';
 
 import { AsyncLocalStorage } from 'async_hooks';
 import knex, { Knex } from "knex";
-// import { OeremQuery } from "./oerem-query";
 import { executeGet, wrapOutput } from "./executor";
 import {
     ModelOptions,
-    OeremBuilder,
-    OeremModel,
-    // QueryCallback,
+    Builder,
+    Model,
     SoftDeleteMode,
-    WithInput
+    WithInput,
+    Wrapper
 } from "./types";
 import { applySecurity, controlOutput } from "./helper";
 import { ModelRegistry } from './registry';
+import { SelectBuilder } from './select-builder';
 
-const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Record<string, any>, U extends Record<string, any> = {}>(tableName: string, options: Partial<ModelOptions<T, U>> = {}): OeremModel<T, U> => {
+const model = (getConnection: () => Knex) => <T extends Record<string, unknown>, U extends Record<string, unknown> = {}>(tableName: string, options: Partial<ModelOptions<T, U>> = {}): Model<T, U> => {
     const pk = (options.primaryKey || 'id') as string;
     const deletedAt = options.deletedAtColumn || 'deleted_at';
 
-    const createBuilder = (modelInstance: OeremModel<T, U>, queryInstance: Knex.QueryBuilder<T, any>): OeremBuilder<T, U> => {
+    const createBuilder = (modelInstance: Model<T, U>, queryInstance: Knex.QueryBuilder<T, unknown[]>): Builder<T, U> => {
 
         // Antrean relasi yang akan diambil
-        let withRelations: WithInput[] = [];
+        let withRelations: (WithInput<U> | string)[] = [];
         let currentQuery = queryInstance;
 
         let softDeleteMode: SoftDeleteMode = 'active';
@@ -40,52 +40,46 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
             },
 
             with(...args) {
-                // console.log({ outerargs: args });
-
                 withRelations.push(...args);
-
-                // console.log({ outerwith: withRelations });
-
                 return this;
             },
 
             query(callback) {
-                // currentQuery = callback(currentQuery);
-                callback(currentQuery);
+                callback(currentQuery as unknown as SelectBuilder<T>);
                 return this;
             },
 
             toSQL() {
-                return (currentQuery as any).toSQL()
+                return currentQuery.toSQL()
             },
 
             // --- QUERY SELECT ---
-            async get<R extends any[] = (T & U)[]>(): Promise<R> {
+            async get<R extends unknown = (T & U)>(): Promise<(R & Wrapper<U>)[]> {
                 return await executeGet<R, T>(
-                    currentQuery as any,
+                    currentQuery,
                     options,
                     tableName,
                     deletedAt as string,
                     softDeleteMode,
-                    withRelations,
+                    withRelations as WithInput[],
                     getConnection
                 );
             },
 
-            async first<R extends {} = T & U>(): Promise<R | undefined> {
+            async first<R = T & U>(): Promise<R | undefined> {
                 if (options.softDelete) {
                     currentQuery.whereNull(deletedAt);
                 }
 
                 const results = await this.get<R[]>()
 
-                return controlOutput([results[0]], options)[0]
+                return controlOutput([results[0]], options)[0] as R | undefined;
             },
 
             // --- QUERY PERSISTENCE (INSERT) ---
-            async create(data: Partial<T>): Promise<T> {
+            async create(data: Partial<T>): Promise<T & Wrapper<U>> {
                 const filtered = applySecurity(data, options);
-                const payload: any = { ...filtered };
+                const payload = { ...filtered } as Record<string, unknown>;
 
                 if (options.timestamps !== false) {
                     const now = getConnection().fn.now();
@@ -97,23 +91,23 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
                 const results = [{ [pk]: data[pk as keyof T] || insertedId, ...payload } as unknown as T];
                 wrapOutput(results, options, getConnection);
 
-                return results[0];
+                return results[0] as T & Wrapper<U>;
             },
 
             async update(data: Partial<T>) {
                 const filtered = applySecurity(data, options);
-                const payload: any = { ...filtered };
+                const payload = { ...filtered } as Record<string, unknown>;
                 if (options.timestamps !== false) {
                     payload.updated_at = payload.updated_at || getConnection().fn.now();
                 }
-                return (currentQuery as unknown as Knex.QueryBuilder<T, any>).update(payload);
+                return currentQuery.update(payload as never) as unknown as Promise<number>;
             },
 
             // --- BATCH PERSISTENCE ---
             async insert(records: Partial<T>[]): Promise<void> {
                 const payloads = records.map(data => {
                     const filtered = applySecurity(data, options);
-                    const payload: any = { ...filtered };
+                    const payload = { ...filtered } as Record<string, unknown>;
                     if (options.timestamps !== false) {
                         const now = getConnection().fn.now();
                         payload.created_at = payload.created_at || now;
@@ -127,26 +121,25 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
             },
 
             async delete() {
-                return (currentQuery as unknown as Knex.QueryBuilder<T, any>).del();
+                return currentQuery.del() as unknown as Promise<number>;
             },
             async softDelete() {
                 if (!options.softDelete) throw new Error("Soft delete disabled");
-                return (currentQuery as unknown as Knex.QueryBuilder<T, any>).update({ [deletedAt]: getConnection().fn.now() } as any);
+                return currentQuery.update({ [deletedAt]: getConnection().fn.now() } as never) as unknown as Promise<number>;
             }
         };
     };
 
-    const instance: OeremModel<T, U> = {
+    const instance: Model<T, U> = {
         tableName,
         with(...args) {
             return createBuilder(this, getConnection()<T>(tableName)).with(...args);
         },
-        // query(cb: QueryCallback<T>) {
         query(cb) {
             return createBuilder(this, getConnection()<T>(tableName)).query(cb);
         },
         all() {
-            return createBuilder(this, getConnection()<T>(tableName)).get();
+            return createBuilder(this, getConnection()<T>(tableName)).get<T & U>();
         },
         find(id) {
             return createBuilder(this, getConnection()<T>(tableName)).query(q => q.where(pk, id)).first();
@@ -174,13 +167,12 @@ const model = (getConnection: () => knex.Knex<any, unknown[]>) => <T extends Rec
         }
     };
 
-    ModelRegistry.register(tableName, instance)
+    ModelRegistry.register(tableName, instance as unknown as Model<Record<string, unknown>, Record<string, unknown>>)
 
     return instance
 }
 
-// export type ModelInstance<T extends Record<string, any>, U extends Record<string, any>> = ReturnType<typeof model> extends (tableName: string, options?: Partial<ModelOptions<T, U>>) => infer R ? R : never;
-export function createOerem(config: Knex.Config) {
+export function createPool(config: Knex.Config) {
     const connection = knex(config);
 
     const trxStore = new AsyncLocalStorage<Knex.Transaction>();
@@ -199,4 +191,4 @@ export function createOerem(config: Knex.Config) {
     };
 }
 
-export type OeremInstance = ReturnType<typeof createOerem>;
+export type PoolInstance = ReturnType<typeof createPool>;

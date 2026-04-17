@@ -1,23 +1,24 @@
 import { Knex } from "knex";
 import {
     ModelOptions,
-    OeremModel,
     // QueryCallback,
     SoftDeleteMode,
     WithCallback,
-    WithInput
+    WithInput,
+    RelationConfig,
+    Wrapper
 } from "./types";
 import { controlOutput } from "./helper";
 
-export async function executeGet<R extends any[], T extends {}, U extends {} = {}>(
-    currentQuery: Knex.QueryBuilder<R, any>,
+export async function executeGet<R extends unknown, T extends Record<string, unknown>, U extends Record<string, unknown> = {}>(
+    currentQuery: Knex.QueryBuilder<T, unknown[]>,
     options: Partial<ModelOptions<T, U>>,
     tableName: string,
     deletedAt: string,
     softDeleteMode: SoftDeleteMode,
-    withRelations: WithInput[],
+    withRelations: WithInput<U>[],
     getConnection: () => Knex
-): Promise<R> {
+): Promise<(R & Wrapper<U>)[]> {
     // Cek internal Knex (mengintip state)
     const statement = (currentQuery as any).toSQL().method;
     const isInsertOrUpdate = ['insert', 'update', 'delete', 'del', 'first'].includes(statement)
@@ -52,11 +53,12 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
         }
     }
 
-    const results = await currentQuery;
+    const qresults = await currentQuery;
+    const results = Array.isArray(qresults) ? qresults : (qresults ? [qresults] : []);
     const cleanResults = controlOutput(results, options);
 
     if (cleanResults.length === 0) {
-        return cleanResults;
+        return cleanResults as (R & Wrapper<U>)[];
     }
 
     if (withRelations.length) {
@@ -71,7 +73,7 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
 
         // 3. Eager Loading (Phase "Stitching")
         for (const [relName, callback] of Object.entries(normalized)) {
-            const relConfig = options.relations?.[relName as keyof U];
+            const relConfig = options.relations?.[relName as string] as RelationConfig | undefined;
             if (!relConfig) {
                 throw new Error(`Oerem Error: Relation [${relName}] not defined in model [${tableName}].`);
             }
@@ -84,8 +86,8 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
              * - belongsTo: Parent mencari 'user_id' (FK), Child mencari 'id' (PK)
              * - hasMany/One: Parent mencari 'id' (PK), Child mencari 'user_id' (FK)
              */
-            const isBelongsToMany = relConfig.type === 'belongsToMany';
-            const isBelongsTo = relConfig.type === 'belongsTo';
+            const isBelongsToMany = relConfig._type === 'belongsToMany';
+            const isBelongsTo = relConfig._type === 'belongsTo';
             const parentKey = isBelongsToMany ? (relConfig.localKey || 'id') : (isBelongsTo ? relConfig.foreignKey : (relConfig.localKey || 'id'));
 
             // 1. Koleksi semua ID unik dari Parent yang akan dicocokkan
@@ -94,7 +96,7 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
             // Jika tidak ada ID di parent, inisialisasi relasi sebagai kosong/null dan skip query
             if (parentIds.length === 0) {
                 cleanResults.forEach((p: any) => {
-                    p[relName] = (relConfig.type === 'hasMany' || relConfig.type === 'belongsToMany') ? [] : null;
+                    p[relName] = (relConfig._type === 'hasMany' || relConfig._type === 'belongsToMany') ? [] : null;
                 });
                 continue;
             }
@@ -104,10 +106,10 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
 
 
             if (isBelongsToMany) {
-                childBuilder = ChildModel.query((q: any) => {
+                childBuilder = ChildModel.query((q) => {
                     q.join(
                         relConfig.pivotTable!,
-                        `${ChildModel.tableName}.${relConfig.relatedKey || 'id'}`,
+                        `${ChildModel.tableName}.${relConfig.foreignKey || 'id'}`,
                         '=',
                         `${relConfig.pivotTable}.${relConfig.relatedPivotKey}`
                     );
@@ -123,12 +125,14 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
                     q.select(`${relConfig.pivotTable}.${relConfig.foreignPivotKey} as _pivot_parent_id`);
 
                     q.whereIn(`${relConfig.pivotTable}.${relConfig.foreignPivotKey}`, parentIds);
+                    return q;
                 });
             } else {
                 // 2. Buat Builder baru untuk Anak
                 // Kita menggunakan childKey untuk memfilter data anak yang berhubungan saja
-                childBuilder = ChildModel.query((q: any) => {
+                childBuilder = ChildModel.query((q) => {
                     q.whereIn(childKey, parentIds);
+                    return q;
                 });
             }
 
@@ -148,7 +152,7 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
             cleanResults.forEach((parent: any) => {
                 const pVal = parent[parentKey];
 
-                if (relConfig.type === 'belongsToMany') {
+                if (relConfig._type === 'belongsToMany') {
                     // 1. Ambil semua baris yang cocok
                     const matchingChildren = childResults.filter((c: any) => c._pivot_parent_id === pVal);
 
@@ -160,8 +164,8 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
                         // Kita bisa menentukan kolom mana saja yang masuk ke pivot
                         // Untuk simplisitas, kita ambil foreignPivotKey dan relatedPivotKey
                         childClone.pivot = {
-                            [relConfig.foreignPivotKey]: c[relConfig.foreignPivotKey],
-                            [relConfig.relatedPivotKey]: c[relConfig.relatedPivotKey],
+                            [relConfig.foreignPivotKey!]: c[relConfig.foreignPivotKey!],
+                            [relConfig.relatedPivotKey!]: c[relConfig.relatedPivotKey!],
                         };
 
                         // Jika ada kolom tambahan di pivot (misal 'status', 'created_at')
@@ -174,7 +178,7 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
 
                         return childClone;
                     });
-                } else if (relConfig.type === 'hasMany') {
+                } else if (relConfig._type === 'hasMany') {
                     // Filter semua anak yang punya FK cocok dengan PK parent
                     parent[relName] = childResults.filter((c: any) => c[childKey] === pVal);
                 } else {
@@ -188,7 +192,7 @@ export async function executeGet<R extends any[], T extends {}, U extends {} = {
     // Definisikan .related() untuk setiap item hasil query
     wrapOutput(cleanResults, options, getConnection);
 
-    return cleanResults
+    return cleanResults as (R & Wrapper<U>)[];
 }
 
 /**
@@ -244,13 +248,13 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
 
     const baseMethods = {
         async create(data: any) {
-            const payload = relConfig.type !== 'belongsToMany'
+            const payload = relConfig._type !== 'belongsToMany'
                 ? { ...data, [relConfig.foreignKey]: parentId }
                 : data;
 
             const newChild = await ChildModel.create(payload);
 
-            if (relConfig.type === 'belongsToMany') {
+            if (relConfig._type === 'belongsToMany') {
                 await (this as any).attach(newChild[pk]);
             }
             return newChild;
@@ -258,12 +262,12 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
 
         async insert(records: any[]) {
             const payloads = records.map(data => (
-                relConfig.type !== 'belongsToMany'
+                relConfig._type !== 'belongsToMany'
                     ? { ...data, [relConfig.foreignKey]: parentId }
                     : data
             ));
 
-            if (relConfig.type === 'belongsToMany') {
+            if (relConfig._type === 'belongsToMany') {
                 // Untuk many-to-many, kita insert data baru dulu, lalu attach
                 const results = [];
                 for (const payload of payloads) {
@@ -285,7 +289,7 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
 
             return await ChildModel.query((q: any) => {
                 // Pastikan kueri hanya menyentuh milik parent ini
-                if (relConfig.type === 'belongsToMany') {
+                if (relConfig._type === 'belongsToMany') {
                     q.whereIn(pk, runner(relConfig.pivotTable)
                         .select(relConfig.relatedPivotKey)
                         .where(relConfig.foreignPivotKey, parentId)
@@ -307,7 +311,7 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
          */
         async delete(id?: any) {
             return await ChildModel.query((q: any) => {
-                if (relConfig.type === 'belongsToMany') {
+                if (relConfig._type === 'belongsToMany') {
                     q.whereIn(pk, runner(relConfig.pivotTable)
                         .select(relConfig.relatedPivotKey)
                         .where(relConfig.foreignPivotKey, parentId)
@@ -325,7 +329,7 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
          */
         async softDelete(id?: any) {
             return await ChildModel.query((q: any) => {
-                if (relConfig.type === 'belongsToMany') {
+                if (relConfig._type === 'belongsToMany') {
                     q.whereIn(pk, runner(relConfig.pivotTable)
                         .select(relConfig.relatedPivotKey)
                         .where(relConfig.foreignPivotKey, parentId)
@@ -340,7 +344,7 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
     };
 
     // Method khusus untuk Many-to-Many
-    if (relConfig.type === 'belongsToMany') {
+    if (relConfig._type === 'belongsToMany') {
         return {
             ...baseMethods,
             async attach(ids: any | any[], extraPivotData = {}) {
@@ -387,7 +391,7 @@ export const wrapOutput = (results: any, options: Partial<ModelOptions<any>>, ge
                 const parentId = this[pk];
 
                 for (const [relName, callback] of Object.entries(actions)) {
-                    const relConfig = options.relations?.[relName];
+                    const relConfig = (options.relations as Record<string, RelationConfig>)?.[relName];
                     if (!relConfig) throw new Error(`Relation ${relName} not found`);
 
                     // 1. Buat handler untuk relasi ini

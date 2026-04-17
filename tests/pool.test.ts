@@ -1,14 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
-    createOerem,
+    BelongsToManyColumn,
+    createPool,
+    InferModel,
+    Model,
+    SoftDeleteColumn,
+    TimeStampColumns,
     // ModelInstance,
-    OeremBuilder
 } from '../src/index';
 import { belongsTo, belongsToMany, hasMany } from '../src/helper';
 
 describe('Oerem ORM Unit Test', () => {
     // 1. Setup koneksi database (In-Memory)
-    const db = createOerem({
+    const db = createPool({
         client: 'sqlite3',
         connection: { filename: ':memory:' },
         useNullAsDefault: true
@@ -21,12 +25,10 @@ describe('Oerem ORM Unit Test', () => {
     } & IRoleRelations
 
     type IRoleRelations = {
-        users?: (IUser & {
-            pivot?: {
-                user_id: number;
-                role_id: number;
-            }
-        })[]
+        users?: BelongsToManyColumn<IUser, {
+            user_id: number;
+            role_id: number;
+        }>
     }
 
     type IUser = {
@@ -36,19 +38,14 @@ describe('Oerem ORM Unit Test', () => {
 
         balance: number;
 
-        created_at?: string;
-        updated_at?: string;
-        deleted_at?: string | null;
-    } & IUserRelations
+    } & IUserRelations & TimeStampColumns & SoftDeleteColumn
 
     type IUserRelations = {
         posts?: IPost[]
-        roles?: (IRole & {
-            pivot?: {
-                user_id: number;
-                role_id: number;
-            }
-        })[]
+        roles?: BelongsToManyColumn<IRole, {
+            user_id: number;
+            role_id: number;
+        }>
     }
 
     type IPost = {
@@ -81,7 +78,7 @@ describe('Oerem ORM Unit Test', () => {
         }
     });
 
-    const User = db.model<IUser, IUserRelations>('users', {
+    const User: Model<IUser, IUserRelations> = db.model('users', {
         fillable: ['username', 'email', 'balance'],
         softDelete: true,
         relations: {
@@ -89,6 +86,8 @@ describe('Oerem ORM Unit Test', () => {
             roles: belongsToMany(() => Role, 'role_user', 'user_id', 'role_id')
         }
     });
+
+    type MUser = InferModel<typeof User>
 
     const Post = db.model<IPost, IPostRelations>('posts', {
         fillable: ['user_id', 'title', 'status'],
@@ -160,7 +159,7 @@ describe('Oerem ORM Unit Test', () => {
                 username: 'ghozali',
                 email: 'ghozali@example.com',
                 // role: 'admin' // Ini harusnya terfilter karena tidak ada di fillable
-            } as any);
+            });
 
             expect(newUser.id).toBe(1);
             expect(newUser.username).toBe('ghozali');
@@ -185,6 +184,15 @@ describe('Oerem ORM Unit Test', () => {
 
             expect(updatedUser?.username).toBe('ghozali_updated');
             expect(updatedUser?.updated_at).not.toBe(oldUser?.updated_at);
+        });
+
+        it('should update multiple records using query chaining', async () => {
+            // Seed data tambahan
+            await User.query(q => q.where('username', 'ghozali_updated')).update({ balance: 500 });
+
+            const updatedUsers = await User.query(q => q.where('balance', 500)).get();
+            expect(updatedUsers).toHaveLength(1);
+            expect(updatedUsers[0].username).toBe('ghozali_updated');
         });
 
         it('should handle complex chaining with query() and get()', async () => {
@@ -479,7 +487,7 @@ describe('Oerem ORM Unit Test', () => {
             ).get<{
                 nama_lengkap: string
                 surel: string
-            }[]>();
+            }>();
 
             const row = results[0];
             expect(row.nama_lengkap).toBe('ghozali');
@@ -496,7 +504,7 @@ describe('Oerem ORM Unit Test', () => {
             ).get<{
                 display_name: string
                 contact: string
-            }[]>();
+            }>();
 
             const row = results[0];
 
@@ -621,7 +629,7 @@ describe('Oerem ORM Unit Test', () => {
                     .groupBy('username')
                     .having('total', '>', 1)
                     .whereLike('username', 'group_%')
-            ).get<{ username: string, total: number }[]>();
+            ).get<{ username: string, total: number }>();
 
             expect(results.length).toBe(1);
             expect(results[0].username).toBe('group_a');
@@ -634,7 +642,7 @@ describe('Oerem ORM Unit Test', () => {
                 q.max('id as max_id')
                     .min('id as min_id')
                     .avg('id as avg_id')
-            ).get<[{ max_id: number, min_id: number, avg_id: number }]>();
+            ).get<{ max_id: number, min_id: number, avg_id: number }>();
 
             const stats = results[0];
 
@@ -657,7 +665,7 @@ describe('Oerem ORM Unit Test', () => {
         it('should support count aggregate function with alias', async () => {
             const results = await User.query(q =>
                 q.count({ total_users: 'id' })
-            ).get<[{ total_users: number }]>();
+            ).get<{ total_users: number }>();
             const total = results[0].total_users;
             expect(Number(total)).toBeGreaterThan(0);
         });
@@ -666,7 +674,7 @@ describe('Oerem ORM Unit Test', () => {
         it('should support sum aggregate function', async () => {
             const results = await User.query(q =>
                 q.sum('id as total_id')
-            ).get<[{ total_id: number }]>();
+            ).get<{ total_id: number }>();
             const total = results[0].total_id;
 
             expect(Number(total)).toBeGreaterThan(0);
@@ -754,10 +762,13 @@ describe('Oerem ORM Unit Test', () => {
         });
 
         it('should load relationship with nested query constraints', async () => {
+            type MPost = InferModel<typeof Post>;
+            type MComment = InferModel<typeof Comment>;
+
             const user = await User.query(q => q.where('username', 'nasyikh'))
                 .with({
-                    posts: (p: OeremBuilder<IPost, IPostRelations>) => p.query(q => q.where('status', 'published')).with({
-                        comments: (c: OeremBuilder<IComment, ICommentRelations>) => c.query(q => q.whereLike('content', '%kedua%')).with('user')
+                    posts: (p: MPost['builder']) => p.query(q => q.where('status', 'published')).with({
+                        comments: (c: MComment['builder']) => c.query(q => q.whereLike('content', '%kedua%')).with('user')
                     })
                 })
                 .first();
@@ -807,8 +818,8 @@ describe('Oerem ORM Unit Test', () => {
 
             // 2. Testing ATTACH via .related()
             // Kita panggil .related() dari instance 'user' yang baru dibuat
-            await (user as any).related({
-                roles: async (r: any) => {
+            await user.related({
+                roles: async (r) => {
                     await r.attach([adminRole.id, editorRole.id]);
                 }
             });

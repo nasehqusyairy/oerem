@@ -1,6 +1,6 @@
-import { ModelOptions, RelationConfig } from "./types";
+import { BelongsTo, BelongsToMany, HasMany, HasOne, ModelOptions, Model, RelationConfig } from "./types";
 
-export function applySecurity<T extends Record<string, any>>(
+export function applySecurity<T extends Record<string, unknown>>(
     data: Partial<T>,
     options: Partial<ModelOptions<T>>
 ): Partial<T> {
@@ -18,11 +18,11 @@ export function applySecurity<T extends Record<string, any>>(
 
     // 2. Cek Fillable: Jika fillable didefinisikan, pastikan HANYA yang ada di sana yang dikirim
     if (options.fillable && options.fillable.length > 0) {
-        const unknown = keys.filter(key => !options.fillable!.includes(key));
+        const unknownKeys = keys.filter(key => !options.fillable!.includes(key));
 
-        if (unknown.length > 0) {
+        if (unknownKeys.length > 0) {
             throw new Error(
-                `Oerem Security Error: Field(s) [${unknown.join(', ')}] are not in fillable list.`
+                `Oerem Security Error: Field(s) [${unknownKeys.join(', ')}] are not in fillable list.`
             );
         }
 
@@ -33,7 +33,7 @@ export function applySecurity<T extends Record<string, any>>(
     return data;
 }
 
-export function applyHidden<T extends Record<string, any>[]>(
+export function applyHidden<T extends Record<string, unknown>[]>(
     results: T,
     hidden: string[]
 ) {
@@ -44,52 +44,65 @@ export function applyHidden<T extends Record<string, any>[]>(
     }) as T
 }
 
-export function controlOutput<R extends Record<string, any>[], T extends {}>(
+export function controlOutput<R extends unknown[], T extends Record<string, unknown>>(
     results: R,
     options: Partial<ModelOptions<T>>
 ): R {
     // --- Hidden Attributes Logic ---
     if (options.hidden && options.hidden.length > 0) {
-        return applyHidden(results, options.hidden as string[]);
+        return applyHidden(results as Record<string, unknown>[], options.hidden as string[]) as unknown as R;
     }
 
     return results;
 }
 
-export const hasMany = (modelThunk: () => any, foreignKey: string, localKey?: string): RelationConfig => ({
-    type: 'hasMany',
+// Sekarang setiap helper return tipe yang spesifik
+export const hasMany = <T extends Record<string, unknown>>(
+    modelThunk: () => Model<T, any>,
+    foreignKey: string,
+    localKey = 'id'
+): HasMany<T> => ({
+    _type: 'hasMany', // phantom, tidak pernah digunakan runtime
     modelThunk,
     foreignKey,
-    localKey: localKey || 'id'
+    localKey,
 });
 
-export const belongsTo = (modelThunk: () => any, foreignKey: string, ownerKey?: string): RelationConfig => ({
-    type: 'belongsTo',
+export const hasOne = <T extends Record<string, unknown>>(
+    modelThunk: () => Model<T, any>,
+    foreignKey: string,
+    localKey = 'id'
+): HasOne<T> => ({
+    _type: 'hasOne',
     modelThunk,
     foreignKey,
-    localKey: ownerKey || 'id'
+    localKey,
 });
 
-export const hasOne = (modelThunk: () => any, foreignKey: string, localKey?: string): RelationConfig => ({
-    type: 'hasOne',
+export const belongsTo = <T extends Record<string, unknown>>(
+    modelThunk: () => Model<T, any>,
+    foreignKey: string,
+    ownerKey = 'id'
+): BelongsTo<T> => ({
+    _type: 'belongsTo',
     modelThunk,
     foreignKey,
-    localKey: localKey || 'id'
+    localKey: ownerKey,
 });
 
-export const belongsToMany = (
-    modelThunk: () => any,
+export const belongsToMany = <T extends Record<string, unknown>>(
+    modelThunk: () => Model<T, any>,
     pivotTable: string,
     foreignPivotKey: string,
     relatedPivotKey: string,
-    parentKey?: string,
-    foreignKey?: string
-): RelationConfig => ({
-    type: 'belongsToMany',
+    parentKey = 'id',
+    foreignKey = 'id'
+): BelongsToMany<T> => ({
+    _type: 'belongsToMany',
     modelThunk,
     pivotTable,
-    foreignPivotKey, // Kolom di pivot yang merujuk ke Parent
-    relatedPivotKey, // Kolom di pivot yang merujuk ke Child
-    localKey: parentKey || 'id', // PK di Parent
-    foreignKey: foreignKey || 'id' // PK di Child
+    foreignPivotKey,
+    relatedPivotKey,
+    localKey: parentKey,
+    foreignKey,
 });
