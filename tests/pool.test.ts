@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
+    BelongsToMany,
     BelongsToManyColumn,
     createPool,
+    HasMany,
     InferModel,
+    InferRelations,
     Model,
     SoftDeleteColumn,
     TimeStampColumns,
@@ -22,7 +25,7 @@ describe('Oerem ORM Unit Test', () => {
     type IRole = {
         id: number;
         name: string;
-    } & IRoleRelations
+    }
 
     type IRoleRelations = {
         users?: BelongsToManyColumn<IUser, {
@@ -38,7 +41,7 @@ describe('Oerem ORM Unit Test', () => {
 
         balance: number;
 
-    } & IUserRelations & TimeStampColumns & SoftDeleteColumn
+    } & TimeStampColumns & SoftDeleteColumn
 
     type IUserRelations = {
         posts?: IPost[]
@@ -53,7 +56,7 @@ describe('Oerem ORM Unit Test', () => {
         user_id: number;
         title: string;
         status: string;
-    } & IPostRelations
+    }
 
     type IPostRelations = {
         comments?: IComment[];
@@ -64,21 +67,24 @@ describe('Oerem ORM Unit Test', () => {
         post_id: number;
         user_id: number;
         content: string;
-    } & ICommentRelations
+    }
 
     type ICommentRelations = {
         user?: IUser
     }
 
     // 3. Inisialisasi Model
-    const Role = db.model<IRole, IRoleRelations>('roles', {
+    const Role = db.model<IRole>()('roles', {
         fillable: ['name'],
         relations: {
             users: belongsToMany(() => User, 'role_user', 'role_id', 'user_id')
         }
     });
 
-    const User: Model<IUser, IUserRelations> = db.model('users', {
+    const User: Model<IUser, InferRelations<{
+        posts: HasMany<IPost, IPostRelations>;
+        roles: BelongsToMany<IRole>;
+    }>> = db.model<IUser>()('users', {
         fillable: ['username', 'email', 'balance'],
         softDelete: true,
         relations: {
@@ -89,14 +95,14 @@ describe('Oerem ORM Unit Test', () => {
 
     type MUser = InferModel<typeof User>
 
-    const Post = db.model<IPost, IPostRelations>('posts', {
+    const Post = db.model<IPost>()('posts', {
         fillable: ['user_id', 'title', 'status'],
         relations: {
             comments: hasMany(() => Comment, 'post_id')
         }
     });
 
-    const Comment = db.model<IComment, ICommentRelations>('comments', {
+    const Comment = db.model<IComment>()('comments', {
         fillable: ['post_id', 'user_id', 'content'],
         relations: {
             user: belongsTo(() => User, 'user_id')
@@ -222,7 +228,7 @@ describe('Oerem ORM Unit Test', () => {
         });
 
         it('should fail soft delete if option is not enabled', async () => {
-            const StrictModel = db.model('other_table', { softDelete: false });
+            const StrictModel = db.model()('other_table', { softDelete: false });
 
             await expect(StrictModel.softDelete(1)).rejects.toThrow("Soft delete disabled");
         });
@@ -427,7 +433,7 @@ describe('Oerem ORM Unit Test', () => {
         });
 
         it('should hide attributes defined in hidden options', async () => {
-            const SecretUser = db.model<IUser>('users', {
+            const SecretUser = db.model<IUser>()('users', {
                 fillable: ['username', 'email'],
                 hidden: ['email']
             });
@@ -442,7 +448,7 @@ describe('Oerem ORM Unit Test', () => {
         });
 
         it('should block creation and update if a guarded field is present', async () => {
-            const GuardedUser = db.model<IUser>('users', {
+            const GuardedUser = db.model<IUser>()('users', {
                 guarded: ['balance'],
                 fillable: ['username', 'balance'] // Role ada di fillable tapi di-block oleh guarded
             });
@@ -463,7 +469,7 @@ describe('Oerem ORM Unit Test', () => {
         });
 
         it('should throw error when field is not in fillable list', async () => {
-            const RestrictedUser = db.model<IUser>('users', { fillable: ['username'] });
+            const RestrictedUser = db.model<IUser>()('users', { fillable: ['username'] });
 
             await expect(RestrictedUser.create({ username: 'ali', email: 'ali@test.com' } as any))
                 .rejects

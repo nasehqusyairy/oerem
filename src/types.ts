@@ -1,38 +1,39 @@
 import { Knex } from "knex";
 import { SelectBuilder } from "./select-builder";
 
-// 1. State untuk Soft Delete (Internal Builder)
+// ============================================================
+// SOFT DELETE
+// ============================================================
 export type SoftDeleteMode = 'active' | 'with' | 'only';
 
-export type RelationType = 'hasMany' | 'hasOne' | 'belongsTo' | 'belongsToMany';
-
-// Ganti RelationConfig yang lama dengan versi tagged
-
-// T = tipe target model
-export interface HasMany<T extends Record<string, unknown>> {
+// ============================================================
+// RELATION CONFIGS — tagged agar bisa dibedakan di InferRelations
+// T = schema target, R = relasi target (agar ModelShape bisa rekursif)
+// ============================================================
+export interface HasMany<T extends Record<string, unknown>, R extends Record<string, unknown> = {}> {
     readonly _type: 'hasMany';
-    modelThunk: () => Model<T, any>;
+    modelThunk: () => Model<T, R>;
     foreignKey: string;
     localKey: string;
 }
 
-export interface HasOne<T extends Record<string, unknown>> {
+export interface HasOne<T extends Record<string, unknown>, R extends Record<string, unknown> = {}> {
     readonly _type: 'hasOne';
-    modelThunk: () => Model<T, any>;
+    modelThunk: () => Model<T, R>;
     foreignKey: string;
     localKey: string;
 }
 
-export interface BelongsTo<T extends Record<string, unknown>> {
+export interface BelongsTo<T extends Record<string, unknown>, R extends Record<string, unknown> = {}> {
     readonly _type: 'belongsTo';
-    modelThunk: () => Model<T, any>;
+    modelThunk: () => Model<T, R>;
     foreignKey: string;
     localKey: string;
 }
 
-export interface BelongsToMany<T extends Record<string, unknown>> {
+export interface BelongsToMany<T extends Record<string, unknown>, R extends Record<string, unknown> = {}> {
     readonly _type: 'belongsToMany';
-    modelThunk: () => Model<T, any>;
+    modelThunk: () => Model<T, R>;
     pivotTable: string;
     foreignPivotKey: string;
     relatedPivotKey: string;
@@ -40,50 +41,57 @@ export interface BelongsToMany<T extends Record<string, unknown>> {
     foreignKey: string;
 }
 
-// Union untuk backward compat
-export type RelationConfig =
-    | HasMany<any>
-    | HasOne<any>
-    | BelongsTo<any>
-    | BelongsToMany<any>;
+// Union — pakai any agar bisa dipakai sebagai constraint tanpa harus specify T & R
+export type AnyRelationConfig =
+    | HasMany<any, any>
+    | HasOne<any, any>
+    | BelongsTo<any, any>
+    | BelongsToMany<any, any>;
 
-// Ambil tipe "isi" dari array atau object
-type Unwrap<T> =
-    T extends (infer I)[] ? I :  // T[] → I
-    T extends (infer I) | undefined ? I :  // T | undefined → I
-    T;
-
-// Dari value di U, tentukan RelationConfig yang valid
-export type InferRelationConfig<V> =
-    // Jika value adalah array → hasMany atau belongsToMany
-    NonNullable<V> extends (infer Item)[]
-    ? Item extends Record<string, unknown>
-    ? HasMany<Item> | BelongsToMany<Item>
-    : never
-    // Jika value adalah object → hasOne atau belongsTo
-    : NonNullable<V> extends Record<string, unknown>
-    ? HasOne<NonNullable<V>> | BelongsTo<NonNullable<V>>
-    : never;
-
-// Map seluruh U menjadi konfigurasi relasi yang valid
-export type RelationsMap<U extends Record<string, unknown>> = {
-    [K in keyof U]-?: InferRelationConfig<U[K]>
-};
-
-export interface ModelOptions<T, U = {}> {
-    primaryKey: keyof T | string;
-    timestamps: boolean;
-    softDelete: boolean;
-    deletedAtColumn: string;
-    fillable: (keyof T)[];
-    guarded: (keyof T)[];
-    hidden: (keyof T)[];
-    relations: U extends Record<string, unknown>
-    ? Partial<RelationsMap<U>>  // ← sekarang divalidasi per-key!
-    : never;
+// ============================================================
+// MODEL OPTIONS & CONFIG
+// ============================================================
+export interface ModelOptions<T> {
+    primaryKey?: keyof T | string;
+    timestamps?: boolean;
+    softDelete?: boolean;
+    deletedAtColumn?: string;
+    fillable?: (keyof T)[];
+    guarded?: (keyof T)[];
+    hidden?: (keyof T)[];
 }
 
-// Helper untuk Autocomplete agar tidak collapsing
+// R diinfer dari isi relations — tidak perlu ditulis manual
+export type ModelConfig<T, R extends Record<string, AnyRelationConfig> = {}> =
+    ModelOptions<T> & {
+        relations?: R;
+    };
+
+// ============================================================
+// INFER HELPERS
+// ============================================================
+
+// Ambil T & U sekaligus dari Model<T, U> — untuk result relasi yang lengkap
+export type ModelShape<M> = M extends Model<infer T, infer U>
+    ? T & U
+    : never;
+
+// Dari konfigurasi relations R, hasilkan shape U yang akan jadi parameter kedua Model
+export type InferRelations<R extends Record<string, AnyRelationConfig>> = {
+    [K in keyof R]:
+    R[K] extends HasMany<any, any> ? ModelShape<ReturnType<R[K]['modelThunk']>>[] :
+    R[K] extends BelongsToMany<any, any> ? ModelShape<ReturnType<R[K]['modelThunk']>>[] :
+    R[K] extends HasOne<any, any> ? ModelShape<ReturnType<R[K]['modelThunk']>> | null :
+    R[K] extends BelongsTo<any, any> ? ModelShape<ReturnType<R[K]['modelThunk']>> | null :
+    never
+};
+
+// Ekstrak schema murni T dari Model<T, U> — untuk keperluan lain
+export type ExtractSchema<M> = M extends Model<infer T, any> ? T : never;
+
+// ============================================================
+// MISC HELPERS
+// ============================================================
 type LiteralUnion<T extends string> = T | (string & {});
 
 export type TimeStampColumns = {
@@ -97,13 +105,14 @@ export type SoftDeleteColumn = {
 
 export type BelongsToManyColumn<T, P> = (T & { pivot?: P })[]
 
-// --- CORE RELATION TYPES ---
+// ============================================================
+// WITH / EAGER LOADING
+// ============================================================
 export type WithCallback<
     T extends Record<string, unknown> = Record<string, unknown>,
     U extends Record<string, unknown> = Record<string, unknown>
 > = (query: Builder<T, U>) => Builder<T, U> | unknown;
 
-// Untuk with() map, gunakan any agar bisa ditimpa
 export type AnyWithCallback = WithCallback<any, any>;
 
 export type WithInput<U extends Record<string, unknown> = Record<string, unknown>> =
@@ -114,69 +123,15 @@ export type WithInput<U extends Record<string, unknown> = Record<string, unknown
     | { [K in keyof U]?: AnyWithCallback }
     | { [K: string]: AnyWithCallback };
 
-// --- BUILDER INTERFACE ---
-// T = Model Utama, U = Definisi Relasi
-export interface Builder<T extends Record<string, unknown>, U extends Record<string, unknown> = {}> {
-    toSQL(): Knex.Sql;
-
-    // Soft Delete
-    withTrashed(): this;
-    onlyTrashed(): this;
-
-    // Eager Loading
-    with(map: { [K in keyof U]?: AnyWithCallback }): this;
-    with(dotNotation: string): this;
-    with(...args: (WithInput<U> | string)[]): this;
-
-    // Querying
-    query(callback: (q: SelectBuilder<T>) => SelectBuilder<T>): this;
-
-    // Execution (Return T & U untuk menggabungkan field asli + field relasi)
-    get<R extends unknown = (T & U)>(): Promise<(R & Wrapper<U>)[]>;
-    first<R = T & U>(): Promise<R | undefined>;
-
-    // Persistence
-    create(data: Partial<T>): Promise<T & Wrapper<U>>;
-    update(data: Partial<T>): Promise<number>;
-    delete(): Promise<number>;
-    softDelete(): Promise<number>;
-    insert(records: Partial<T>[]): Promise<void>;
-}
-
-// --- MODEL INSTANCE INTERFACE ---
-export interface Model<T extends Record<string, unknown>, U extends Record<string, unknown> = {}> {
-    tableName: string;
-
-    with(relation: keyof U & string): Builder<T, U>;
-    with(relations: (keyof U & string)[]): Builder<T, U>;
-    with(map: { [K in keyof U]?: WithCallback<Record<string, unknown>, Record<string, unknown>> }): Builder<T, U>;
-    with(dotNotation: string): Builder<T, U>;
-    with(...args: (WithInput<U> | string)[]): Builder<T, U>;
-
-    query(callback: (q: SelectBuilder<T>) => SelectBuilder<T>): Builder<T, U>;
-
-    withTrashed(): Builder<T, U>;
-    onlyTrashed(): Builder<T, U>;
-
-    // Direct actions
-    all(): Promise<(T & U & Wrapper<U>)[]>;
-    find(id: number | string): Promise<(T & U & Wrapper<U>) | undefined>;
-    create(data: Partial<T>): Promise<T & Wrapper<U>>;
-    insert(records: Partial<T>[]): Promise<void>;
-    update(id: number | string, data: Partial<T>): Promise<number>;
-    delete(id: number | string): Promise<number>;
-    softDelete(id: number | string): Promise<number>;
-}
-
-
-// Methods khusus belongsToMany
+// ============================================================
+// RELATED — untuk operasi relasi (attach, detach, create, dll)
+// ============================================================
 export type PivotMethods = {
     attach: (ids: (number | string)[]) => Promise<void>;
     detach: (ids: (number | string)[]) => Promise<void>;
     sync: (ids: (number | string)[]) => Promise<void>;
 }
 
-// Methods untuk relasi biasa (hasMany, hasOne, belongsTo)
 export type RelatedMethods<T extends Record<string, unknown>> = {
     create: (data: Partial<T>) => Promise<T>;
     update: (data: Partial<T>) => Promise<number>;
@@ -185,31 +140,89 @@ export type RelatedMethods<T extends Record<string, unknown>> = {
     insert: (records: Partial<T>[]) => Promise<void>;
 }
 
-// Gabungan untuk belongsToMany
 export type PivotRelatedMethods<T extends Record<string, unknown>> =
     RelatedMethods<T> & PivotMethods;
 
-// Infer methods yang tersedia berdasarkan tipe relasi di U
+// Deteksi dari tagged type — bukan dari shape U
 type RelatedCallback<V> =
-    // Array dengan pivot → belongsToMany → dapat PivotMethods
-    NonNullable<V> extends (infer Item)[]
-    ? Item extends { pivot?: any }
-    ? (r: PivotRelatedMethods<Omit<Item, 'pivot'>>) => Promise<void> | void
-    : (r: RelatedMethods<Item extends Record<string, unknown> ? Item : never>) => Promise<void> | void
-    // Object tunggal → hasOne/belongsTo → hanya RelatedMethods
-    : NonNullable<V> extends Record<string, unknown>
-    ? (r: RelatedMethods<NonNullable<V>>) => Promise<void> | void
+    V extends HasMany<infer T, any>
+    ? (r: RelatedMethods<T>) => Promise<void> | void
+    : V extends BelongsToMany<infer T, any>
+    ? (r: PivotRelatedMethods<T>) => Promise<void> | void
+    : V extends HasOne<infer T, any>
+    ? (r: RelatedMethods<T>) => Promise<void> | void
+    : V extends BelongsTo<infer T, any>
+    ? (r: RelatedMethods<T>) => Promise<void> | void
     : never;
 
-// Map dari U ke callbacks
-export type RelatedInput<U extends Record<string, unknown>> = {
-    [K in keyof U]?: RelatedCallback<U[K]>
+// R di sini adalah Record<string, AnyRelationConfig> — bukan U
+export type RelatedInput<R extends Record<string, AnyRelationConfig>> = {
+    [K in keyof R]?: RelatedCallback<R[K]>
 };
 
-export type Wrapper<U extends Record<string, unknown>> = {
-    related(input: RelatedInput<U>): Promise<void>;
+// ============================================================
+// BUILDER INTERFACE
+// T = schema utama, U = shape relasi (hasil InferRelations)
+// ============================================================
+export interface Builder<T extends Record<string, unknown>, U extends Record<string, unknown> = {}> {
+    toSQL(): Knex.Sql;
+
+    withTrashed(): this;
+    onlyTrashed(): this;
+
+    with(map: { [K in keyof U]?: AnyWithCallback }): this;
+    with(dotNotation: string): this;
+    with(...args: (WithInput<U> | string)[]): this;
+
+    query(callback: (q: SelectBuilder<T>) => SelectBuilder<T>): this;
+
+    // Return T & U — relasi sudah termuat di U
+    get(): Promise<(T & U)[]>;
+    first(): Promise<(T & U) | undefined>;
+
+    create(data: Partial<T>): Promise<T>;
+    update(data: Partial<T>): Promise<number>;
+    delete(): Promise<number>;
+    softDelete(): Promise<number>;
+    insert(records: Partial<T>[]): Promise<void>;
 }
 
-export type InferModel<M> = M extends Model<infer T, infer U>
+// ============================================================
+// MODEL INTERFACE
+// T = schema utama, U = shape relasi (hasil InferRelations)
+// R = konfigurasi relasi mentah (untuk related())
+// ============================================================
+export interface Model<
+    T extends Record<string, unknown>,
+    U extends Record<string, unknown> = {},
+    R extends Record<string, AnyRelationConfig> = {}
+> {
+    tableName: string;
+
+    with(map: { [K in keyof U]?: AnyWithCallback }): Builder<T, U>;
+    with(dotNotation: string): Builder<T, U>;
+    with(...args: (WithInput<U> | string)[]): Builder<T, U>;
+
+    query(callback: (q: SelectBuilder<T>) => SelectBuilder<T>): Builder<T, U>;
+
+    withTrashed(): Builder<T, U>;
+    onlyTrashed(): Builder<T, U>;
+
+    all(): Promise<(T & U)[]>;
+    find(id: number | string): Promise<(T & U) | undefined>;
+    create(data: Partial<T>): Promise<T>;
+    insert(records: Partial<T>[]): Promise<void>;
+    update(id: number | string, data: Partial<T>): Promise<number>;
+    delete(id: number | string): Promise<number>;
+    softDelete(id: number | string): Promise<number>;
+
+    // related() menggunakan R (config mentah) agar bisa deteksi tagged type
+    related(input: RelatedInput<R>): Promise<void>;
+}
+
+// ============================================================
+// UTILITY TYPES
+// ============================================================
+export type InferModel<M> = M extends Model<infer T, infer U, any>
     ? { instance: Model<T, U>; builder: Builder<T, U> }
     : never;

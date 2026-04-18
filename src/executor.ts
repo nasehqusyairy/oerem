@@ -6,13 +6,14 @@ import {
     WithCallback,
     WithInput,
     RelationConfig,
-    Wrapper
+    Wrapper,
+    ModelConfig
 } from "./types";
 import { controlOutput } from "./helper";
 
 export async function executeGet<R extends unknown, T extends Record<string, unknown>, U extends Record<string, unknown> = {}>(
     currentQuery: Knex.QueryBuilder<T, unknown[]>,
-    options: Partial<ModelOptions<T, U>>,
+    options: Partial<ModelConfig<T, any>>,
     tableName: string,
     deletedAt: string,
     softDeleteMode: SoftDeleteMode,
@@ -380,7 +381,7 @@ export const createRelationHandler = (getConnection: any, parentId: any, relConf
     return baseMethods;
 };
 
-export const wrapOutput = (results: any, options: Partial<ModelOptions<any>>, getConnection: () => Knex) => {
+export const wrapOutput = (results: any, options: Partial<ModelConfig<any>>, getConnection: () => Knex) => {
     results.forEach((item: any) => {
         // Definisikan .related()
         Object.defineProperty(item, 'related', {
