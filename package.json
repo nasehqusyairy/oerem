@@ -23,7 +23,7 @@
     "gen:types": "ts-node scripts/generate-types.ts"
   },
   "keywords": ["orm", "knex", "database"],
-  "author": "Nama Kamu <email@kamu.com>",
+  "author": "Mohammad Nasyikh Al-Qusyairy",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^22.0.0",
