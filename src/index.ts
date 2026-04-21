@@ -15,6 +15,8 @@ import { applySecurity, controlOutput } from "./helper";
 import { ModelRegistry } from './registry';
 import { SelectBuilder } from './select-builder';
 
+export { hasMany, hasOne, belongsTo, belongsToMany } from './helper';
+
 const model = (getConnection: () => Knex) => <T extends Record<string, unknown>, U extends Record<string, unknown> = {}>(tableName: string, options: Partial<ModelOptions<T, U>> = {}): Model<T, U> => {
     const pk = (options.primaryKey || 'id') as string;
     const deletedAt = options.deletedAtColumn || 'deleted_at';
