@@ -9,6 +9,7 @@ import {
     // ModelInstance,
 } from '../src/index';
 import { belongsTo, belongsToMany, hasMany } from '../src/helper';
+import { Knex } from 'knex';
 
 describe('Oerem ORM Unit Test', () => {
     // 1. Setup koneksi database (In-Memory)
@@ -16,7 +17,7 @@ describe('Oerem ORM Unit Test', () => {
         client: 'sqlite3',
         connection: { filename: ':memory:' },
         useNullAsDefault: true
-    });
+    } as Knex.Config);
 
     // 2. Definisikan interface untuk testing
     type IRole = {

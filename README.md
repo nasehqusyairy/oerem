@@ -6,13 +6,10 @@ Certainly\! Here is the professional version of your `README.md` translated into
 
 **Oerem** (Object-literal Easy Relation Manager) is a lightweight, functional, and powerful TypeScript ORM built on top of [Knex.js](https://knexjs.org/). It is specifically designed for rapid development using an *object-literal* pattern without sacrificing relational integrity or transaction safety.
 
-[](https://www.google.com/search?q=https://www.npmjs.com/package/oerem)
-[](https://www.google.com/search?q=LICENSE)
-
 ## ✨ Key Features
 
   * **Atomic Transactions**: Automatic transaction management via `AsyncLocalStorage`. Forget about passing the `trx` variable manually through every function.
-  * **Relationship Persistence**: Elegant relationship manipulation using `.related()`. Supports `attach`, `detach`, `sync`, and `create` directly through relations.
+  * **Relationship Persistence**: Elegant relationship manipulation using `.related()`. Supports `attach`, `detach`, `create`,`update`,`updatePivot`,`delete`, and `softDelete` directly through relations.
   * **Smart Eager Loading**: Built-in handling for `hasOne`, `hasMany`, `belongsTo`, and `belongsToMany` (Many-to-Many) with high-performance execution.
   * **JSON-Safe**: All internal methods are *non-enumerable*, ensuring your object output remains clean when parsed to JSON for API responses.
   * **Soft Deletes**: Native support for logical deletion across all queries.
