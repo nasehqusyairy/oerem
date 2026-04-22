@@ -1,7 +1,3 @@
-Certainly\! Here is the professional version of your `README.md` translated into English, optimized for the open-source community.
-
------
-
 # Oerem 🍬
 
 **Oerem** (Object-literal Easy Relation Manager) is a lightweight, functional, and powerful TypeScript ORM built on top of [Knex.js](https://knexjs.org/). It is specifically designed for rapid development using an *object-literal* pattern without sacrificing relational integrity or transaction safety.
