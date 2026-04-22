@@ -38,8 +38,8 @@ npm install tedious
 ### 1\. Initialization
 
 ```typescript
-import { createOerem } from '@lalase/oerem';
-import { createOerem } from '@lalase/oerem';
+import { createOerem } from 'oerem';
+import { createOerem } from 'oerem';
 
 export const db = createOerem({
   client: process.env.DB_CONNECTION || 'mysql2',
@@ -63,7 +63,7 @@ import {
     TimeStampColumns,
     belongsToMany,
     hasMany
-} from '@lalase/oerem';
+} from 'oerem';
 
 export type TUser = {
   id: number;

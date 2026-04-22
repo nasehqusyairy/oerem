@@ -1,6 +1,6 @@
 {
   "name": "oerem",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "A simple and lightweight ORM for Node.js built on top of Knex.js.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
