@@ -21,7 +21,16 @@ Certainly\! Here is the professional version of your `README.md` translated into
 
 ```bash
 npm install oerem knex
+
 # Don't forget to install your database driver (pg, mysql2, sqlite3, etc.)
+npm install pg
+npm install pg-native
+npm install sqlite3
+npm install better-sqlite3
+npm install mysql
+npm install mysql2
+npm install oracledb
+npm install tedious
 ```
 
 ## 🚀 Getting Started
@@ -29,19 +38,52 @@ npm install oerem knex
 ### 1\. Initialization
 
 ```typescript
-import { createOerem } from 'oerem';
+import { createOerem } from '@lalase/oerem';
+import { createOerem } from '@lalase/oerem';
 
 export const db = createOerem({
-  client: 'mysql2',
-  connection: { /* knex configuration */ }
-});
+  client: process.env.DB_CONNECTION || 'mysql2',
+  connection: {
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '3306'),
+      user: process.env.DB_USERNAME || 'root',
+      password: process.env.DB_PASSWORD || '',
+      database: process.env.DB_NAME || 'lalase',
+  }
+} as Knex.Config);
 ```
 
 ### 2\. Defining a Model
 
 ```typescript
-export const User = db.model<UserAttributes, UserRelations>('users', {
-  fillable: ['username', 'email'],
+import {
+    BelongsToManyColumn,
+    Model,
+    SoftDeleteColumn,
+    TimeStampColumns,
+    belongsToMany,
+    hasMany
+} from '@lalase/oerem';
+
+export type TUser = {
+  id: number;
+  name: string;
+  email: string;
+  password: string;
+
+} & TRUser & TimeStampColumns & SoftDeleteColumn
+
+export type TRUser = {
+    posts?: IPost[]
+    roles?: BelongsToManyColumn<IRole, {
+        user_id: number;
+        role_id: number;
+    }>
+}
+
+export const User: Model<TUser, TRUser> = db.model('users', {
+  fillable: ['name', 'email','password'],
+  hidden:['password'],
   softDelete: true,
   relations: {
     posts: hasMany(() => Post, 'user_id'),
@@ -55,7 +97,7 @@ export const User = db.model<UserAttributes, UserRelations>('users', {
 **Eager Loading with Pivot Data:**
 
 ```typescript
-const users = await User.query()
+const users = await User.query(q=>q.whereNot('id', 1))
   .with('roles', 'posts')
   .get();
 
@@ -82,7 +124,6 @@ await db.transaction(async () => {
 const user = await User.find(1);
 
 await user.related({
-  roles: (r) => r.sync([1, 2, 3]), // Detach missing IDs, attach new ones
   posts: (p) => p.create({ title: 'Hello Oerem!' })
 });
 ```
@@ -98,24 +139,6 @@ await user.related({
 | `update(id, data)` | Updates related records within the parent scope. | All |
 | `delete(id?)` | Deletes related records within the parent scope. | All |
 
-## 🧪 Development & Testing
-
-To contribute or perform local testing:
-
-```bash
-# Clone the repository
-git clone https://github.com/username/oerem.git
-
-# Install dependencies
-npm install
-
-# Build the library
-npm run build
-
-# Run tests
-npm test
-```
-
 -----
 
-Built with ❤️ for the **Lalacan Framework** ecosystem.
+Built with ❤️ for the **Lalase Framework** ecosystem.

@@ -1,0 +1,6 @@
+allowBuilds:
+  better-sqlite3: false
+  esbuild: false
+  libpq: false
+  oracledb: false
+  sqlite3: true
